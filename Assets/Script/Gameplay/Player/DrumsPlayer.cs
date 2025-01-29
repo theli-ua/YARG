@@ -161,7 +161,7 @@ namespace YARG.Gameplay.Player
                     if (isDrumFreestyle)
                     {
                         _kickFretFlash.PlayHitAnimation();
-                        CameraPositioner.Bounce();
+                        // CameraPositioner.Bounce();
                     }
                 }
             };
@@ -264,7 +264,7 @@ namespace YARG.Gameplay.Player
             {
                 _kickFretFlash.PlayHitAnimation();
                 _fretArray.PlayKickFretAnimation();
-                CameraPositioner.Bounce();
+                // CameraPositioner.Bounce();
             }
         }
 

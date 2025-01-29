@@ -11,11 +11,11 @@ namespace YARG.Gameplay.HUD
     {
         private static readonly int _curveFactor = Shader.PropertyToID("_CurveFactor");
 
-        [field: SerializeField]
-        public RawImage TrackImage { get; private set; }
+        // [field: SerializeField]
+        // public RawImage TrackImage { get; private set; }
 
-        [SerializeField]
-        private AspectRatioFitter _aspectRatioFitter;
+        // [SerializeField]
+        // private AspectRatioFitter _aspectRatioFitter;
         [SerializeField]
         private RectTransform _topElementContainer;
 
@@ -33,17 +33,17 @@ namespace YARG.Gameplay.HUD
 
         private void Start()
         {
-            _aspectRatioFitter.aspectRatio = (float) Screen.width / Screen.height;
+            // _aspectRatioFitter.aspectRatio = (float) Screen.width / Screen.height;
         }
 
         public void Initialize(RenderTexture rt, CameraPreset cameraPreset, TrackPlayer trackPlayer)
         {
-            TrackImage.texture = rt;
+            // TrackImage.texture = rt;
 
             // Clone the material since RawImages don't use instanced materials
-            var newMaterial = new Material(TrackImage.material);
-            newMaterial.SetFloat(_curveFactor, cameraPreset.CurveFactor);
-            TrackImage.material = newMaterial;
+            // var newMaterial = new Material(TrackImage.material);
+            // newMaterial.SetFloat(_curveFactor, cameraPreset.CurveFactor);
+            // TrackImage.material = newMaterial;
 
             _trackPlayer = trackPlayer;
         }
@@ -55,29 +55,29 @@ namespace YARG.Gameplay.HUD
             float scale = Mathf.Max(0.7f * Mathf.Log10(trackCount - 1), 0f);
             scale = 1f - scale;
 
-            TrackImage.transform.localScale = new Vector3(scale, scale, scale);
+            // TrackImage.transform.localScale = new Vector3(scale, scale, scale);
         }
 
         public void UpdateHUDPosition()
         {
-            var rect = TrackImage.GetComponent<RectTransform>();
-            var viewportPos = _trackPlayer.HUDViewportPosition;
+            // var rect = TrackImage.GetComponent<RectTransform>();
+            // var viewportPos = _trackPlayer.HUDViewportPosition;
 
-            // Caching this is faster
-            var rectRect = rect.rect;
+            // // Caching this is faster
+            // var rectRect = rect.rect;
 
-            // Adjust the screen's viewport position to the rect's viewport position
-            // TODO: I have no idea where this "- 0.5f" comes from. Are these calculations correct?
-            var local = new Vector2(
-                (viewportPos.x - 0.5f) * rectRect.width,
-                viewportPos.y * rectRect.height);
-            var screenPos = rect.TransformPoint(local);
+            // // Adjust the screen's viewport position to the rect's viewport position
+            // // TODO: I have no idea where this "- 0.5f" comes from. Are these calculations correct?
+            // var local = new Vector2(
+            //     (viewportPos.x - 0.5f) * rectRect.width,
+            //     viewportPos.y * rectRect.height);
+            // var screenPos = rect.TransformPoint(local);
 
-            // Now, move the MoveContainer based on this
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                (RectTransform) _topElementContainer.parent,
-                screenPos, null, out var localPoint);
-            _topElementContainer.localPosition = localPoint;
+            // // Now, move the MoveContainer based on this
+            // RectTransformUtility.ScreenPointToLocalPointInRectangle(
+            //     (RectTransform) _topElementContainer.parent,
+            //     screenPos, null, out var localPoint);
+            // _topElementContainer.localPosition = localPoint;
         }
 
         public void UpdateCountdown(int measuresLeft, double countdownLength, double endTime)

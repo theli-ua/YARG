@@ -5,7 +5,6 @@ using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Video;
-using YARG.Core.Extensions;
 using YARG.Core.IO;
 using YARG.Core.Venue;
 using YARG.Helpers.Extensions;

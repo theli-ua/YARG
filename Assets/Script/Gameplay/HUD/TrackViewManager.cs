@@ -19,9 +19,13 @@ namespace YARG.Gameplay.HUD
         [SerializeField]
         private RawImage _vocalImage;
         [SerializeField]
+        private RawImage _highwaysImage;
+        [SerializeField]
         private Transform _vocalHudParent;
         [SerializeField]
         private CountdownDisplay _vocalsCountdownDisplay;
+        [SerializeField]
+        private Camera _highwayCamera;
 
         private readonly List<TrackView> _trackViews = new();
 
@@ -31,14 +35,26 @@ namespace YARG.Gameplay.HUD
             var trackView = Instantiate(_trackViewPrefab, transform).GetComponent<TrackView>();
 
             // Set up render texture
+            // var descriptor = new RenderTextureDescriptor(
+            //     // Screen.width, Screen.height,
+            //     4,4,
+            //     RenderTextureFormat.ARGBHalf);
+            // descriptor.mipCount = 0;
+            // var renderTexture = new RenderTexture(descriptor);
+
+            // Make the camera render on to the texture instead of the screen
+            // trackPlayer.TrackCamera.targetTexture = renderTexture;
+
+
+
+            
             var descriptor = new RenderTextureDescriptor(
                 Screen.width, Screen.height,
                 RenderTextureFormat.ARGBHalf);
             descriptor.mipCount = 0;
             var renderTexture = new RenderTexture(descriptor);
-
-            // Make the camera render on to the texture instead of the screen
-            trackPlayer.TrackCamera.targetTexture = renderTexture;
+            _highwaysImage.texture = renderTexture;
+            _highwayCamera.targetTexture = renderTexture;
 
             // Setup track view to show the correct track
             trackView.Initialize(renderTexture, player.CameraPreset, trackPlayer);
@@ -60,6 +76,7 @@ namespace YARG.Gameplay.HUD
             // Apply the vocal track texture
             var rt = GameManager.VocalTrack.InitializeRenderTexture(ratio);
             _vocalImage.texture = rt;
+
         }
 
         public VocalsPlayerHUD CreateVocalsPlayerHUD()

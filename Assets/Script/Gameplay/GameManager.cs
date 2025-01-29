@@ -42,7 +42,7 @@ namespace YARG.Gameplay
         public const double SONG_START_DELAY = SongRunner.SONG_START_DELAY;
         public const double SONG_END_DELAY = SONG_START_DELAY;
 
-        public const float TRACK_SPACING_X = 100f;
+        public const float TRACK_SPACING_X = 3f;
 
         public bool IsSeekingReplay;
 
