@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using UnityEngine;
+using UnityEngine.Rendering;
+
 
 
 #if UNITY_EDITOR
@@ -15,6 +17,7 @@ namespace YARG.Venue
         // DO NOT CHANGE THIS! It will break existing venues
         public const string BACKGROUND_PREFAB_PATH = "Assets/_Background.prefab";
         public const string BACKGROUND_SHADER_BUNDLE_NAME = "_metal_shaders.bytes";
+        public const string BACKGROUND_SHADER_VARIANTS_PATH = "_metal_shader_variants.shadervariants";
 
         // DO NOT CHANGE the name of this! I *know* it doesn't follow naming conventions, but it will also break existing
         // venues if we do change it.
@@ -71,32 +74,48 @@ namespace YARG.Venue
                     return;
                 }
 
+                var shaderCollection = new ShaderVariantCollection();
+
                 // First we'll collect all shaders and build a separate bundle out of them
                 // for Mac as no other build target will include Metal shaders
                 // And we want our background to work everywhere
                 var shaderAssets = EditorUtility.CollectDependencies(new[] { gameObject })
-                    .OfType<Shader>() // Only shader dependencices
-                    .Select(shader => AssetDatabase.GetAssetPath(shader)) // Get asset path
-                    .Where(assetPath => !assetPath.StartsWith("Packages/com.unity")) // Not builtins
+                    .OfType<Material>() // Only material dependencies
+                    .Select(material =>
+                    {
+                        var shader = material.shader;
+                        foreach (PassType passType in System.Enum.GetValues(typeof(PassType)))
+                        {
+                            try
+                            {
+                                shaderCollection.Add(new ShaderVariantCollection.ShaderVariant(shader, passType, material.shaderKeywords));
+                            }
+                            catch { }
+                        }
+                        return AssetDatabase.GetAssetPath(shader);
+                    })
+                    .Distinct()
                     .ToArray();
 
-                if (shaderAssets.Length > 0)
-                {
-                    var metalAssetBundleBuild = default(AssetBundleBuild);
-                    metalAssetBundleBuild.assetBundleName = BACKGROUND_SHADER_BUNDLE_NAME;
-                    metalAssetBundleBuild.assetNames = shaderAssets;
+                var shaderCollectionAsset = Path.Combine("Assets", BACKGROUND_SHADER_VARIANTS_PATH);
+                AssetDatabase.CreateAsset(shaderCollection, shaderCollectionAsset);
 
-                    BuildPipeline.BuildAssetBundles(Application.temporaryCachePath,
-                        new[]
-                        {
-                            metalAssetBundleBuild
-                        }, BuildAssetBundleOptions.ForceRebuildAssetBundle,
-                        BuildTarget.StandaloneOSX);
+                var metalAssetBundleBuild = default(AssetBundleBuild);
+                metalAssetBundleBuild.assetBundleName = BACKGROUND_SHADER_BUNDLE_NAME;
+                metalAssetBundleBuild.assetNames = shaderAssets.Concat(new[] { shaderCollectionAsset }).ToArray();
 
-                    var filePath = Path.Combine(Application.temporaryCachePath, BACKGROUND_SHADER_BUNDLE_NAME);
-                    File.Move(filePath, Path.Combine(Application.dataPath, BACKGROUND_SHADER_BUNDLE_NAME));
-                    AssetDatabase.Refresh();
-                }
+                BuildPipeline.BuildAssetBundles(Application.temporaryCachePath,
+                    new[]
+                    {
+                         metalAssetBundleBuild
+                    }, BuildAssetBundleOptions.ForceRebuildAssetBundle,
+                    BuildTarget.StandaloneOSX);
+
+                AssetDatabase.DeleteAsset(shaderCollectionAsset);
+
+                var filePath = Path.Combine(Application.temporaryCachePath, BACKGROUND_SHADER_BUNDLE_NAME);
+                File.Move(filePath, Path.Combine(Application.dataPath, BACKGROUND_SHADER_BUNDLE_NAME));
+                AssetDatabase.ImportAsset(Path.Combine(Application.dataPath, BACKGROUND_SHADER_BUNDLE_NAME));
 
                 clonedBackground = Instantiate(_backgroundReference.gameObject);
 
