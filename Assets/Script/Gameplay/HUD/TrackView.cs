@@ -56,6 +56,12 @@ namespace YARG.Gameplay.HUD
             scale = 1f - scale;
 
             TrackImage.transform.localScale = new Vector3(scale, scale, scale);
+
+            // Now update backing Texture to match the size of this on the screen
+            _trackPlayer.TrackCamera.targetTexture.Release();
+            _trackPlayer.TrackCamera.targetTexture.height = (int)(Screen.height * scale);
+            _trackPlayer.TrackCamera.targetTexture.width = (int)(Screen.width * scale);
+            _trackPlayer.TrackCamera.targetTexture.Create();
         }
 
         public void UpdateHUDPosition()
