@@ -4,6 +4,7 @@
 #define vec3 float3
 #define vec4 float4
 #define mat2 float2x2
+#define mat3 float3x3
 #define fract frac
 #define iTime _Time.y
 #define atan atan2
