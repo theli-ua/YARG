@@ -66,7 +66,7 @@ namespace YARG.Gameplay
             }
         }
 
-        public async void FixedUpdate()
+        public async void Update()
         {
             if (_soundTexture != null)
             {
