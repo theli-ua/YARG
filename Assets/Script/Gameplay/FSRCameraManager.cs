@@ -1,5 +1,6 @@
 using System.Linq;
 using FidelityFX;
+using FidelityFX.FSR2;
 using FidelityFX.FSR3;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
@@ -24,7 +25,7 @@ namespace YARG.Gameplay
         public bool performSharpenPass = true;
         [Tooltip("Strength of the sharpening effect.")]
         [Range(0, 1)] public float sharpness = 0.8f;
-        [Tooltip("Adjust the influence of motion vectors on temporal accumulation.")]
+        [Tooltip("Adjust the influence of motion vectors on temporal accumulation.(FSR3 only)")]
         [Range(0, 1)] public float velocityFactor = 1.0f;
 
         [Header("Exposure")]
@@ -54,8 +55,10 @@ namespace YARG.Gameplay
             [Range(0, 1)] public float cutoffThreshold = 0.2f;
             [Tooltip("A value to set for the binary reactive mask")]
             [Range(0, 1)] public float binaryValue = 0.9f;
-            [Tooltip("Flags to determine how to generate the reactive mask")]
+            [Tooltip("Flags to determine how to generate the reactive mask FSR3")]
             public Fsr3Upscaler.GenerateReactiveFlags flags = Fsr3Upscaler.GenerateReactiveFlags.ApplyTonemap | Fsr3Upscaler.GenerateReactiveFlags.ApplyThreshold | Fsr3Upscaler.GenerateReactiveFlags.UseComponentsMax;
+            [Tooltip("Flags to determine how to generate the reactive mask FSR3")]
+            public Fsr2.GenerateReactiveFlags fsr2flags = Fsr2.GenerateReactiveFlags.ApplyTonemap | Fsr2.GenerateReactiveFlags.ApplyThreshold | Fsr2.GenerateReactiveFlags.UseComponentsMax;
         }
 
 
@@ -66,9 +69,14 @@ namespace YARG.Gameplay
 
         private Fsr3UpscalerAssets _assets;
         protected internal Fsr3UpscalerContext _context;
+        private Fsr2Assets _Fsr2assets;
+        protected internal Fsr2Context _Fsr2context;
 
         protected internal readonly Fsr3Upscaler.DispatchDescription _dispatchDescription = new Fsr3Upscaler.DispatchDescription();
         protected internal readonly Fsr3Upscaler.GenerateReactiveDescription _genReactiveDescription = new Fsr3Upscaler.GenerateReactiveDescription();
+
+        protected internal readonly Fsr2.DispatchDescription _Fsr2dispatchDescription = new Fsr2.DispatchDescription();
+        protected internal readonly Fsr2.GenerateReactiveDescription _Fsr2genReactiveDescription = new Fsr2.GenerateReactiveDescription();
 
         public Camera renderCamera;
         public GameObject textureParentObject;
@@ -76,6 +84,7 @@ namespace YARG.Gameplay
         private Vector2Int _displaySize;
         private float _mipmapBiasOffset = 0f;
         protected internal Matrix4x4 _jitterTranslationMatrix;
+        protected internal bool _useFsr2 = true;
 
         // Passes
         private FSRPass _fsrPass;
@@ -100,6 +109,7 @@ namespace YARG.Gameplay
 
             renderCamera = GetComponent<Camera>();
             _assets = Resources.Load<Fsr3UpscalerAssets>("FSR3 Upscaler Assets");
+            _Fsr2assets = Resources.Load<Fsr2Assets>("FSR2 Assets");
             renderCamera.depthTextureMode = DepthTextureMode.Depth | DepthTextureMode.MotionVectors;
             renderCamera.clearFlags |= CameraClearFlags.Depth;
             renderCamera.GetUniversalAdditionalCameraData().requiresDepthTexture = true;
@@ -122,46 +132,72 @@ namespace YARG.Gameplay
             {
                 DestroyFsrContext();
             }
-            Fsr3Upscaler.InitializationFlags flags = 0;
 
-            if (renderCamera.allowHDR) flags |= Fsr3Upscaler.InitializationFlags.EnableHighDynamicRange;
-            if (enableAutoExposure) flags |= Fsr3Upscaler.InitializationFlags.EnableAutoExposure;
+            if (!_useFsr2)
+            {
+                Fsr3Upscaler.InitializationFlags flags = 0;
 
-            _context = Fsr3Upscaler.CreateContext(_displaySize, GetScaledRenderSize(), _assets.shaders, flags);
+                if (renderCamera.allowHDR) flags |= Fsr3Upscaler.InitializationFlags.EnableHighDynamicRange;
+                if (enableAutoExposure) flags |= Fsr3Upscaler.InitializationFlags.EnableAutoExposure;
+
+                _context = Fsr3Upscaler.CreateContext(_displaySize, GetScaledRenderSize(), _assets.shaders, flags);
+            }
+            else
+            {
+                Fsr2.InitializationFlags flags = 0;
+                if (renderCamera.allowHDR) flags |= Fsr2.InitializationFlags.EnableHighDynamicRange;
+                if (enableAutoExposure) flags |= Fsr2.InitializationFlags.EnableAutoExposure;
+
+                _Fsr2context = Fsr2.CreateContext(_displaySize, GetScaledRenderSize(), _Fsr2assets.shaders, flags);
+            }
+
         }
 
         private Vector2Int GetScaledRenderSize()
         {
-            return new Vector2Int((int) (renderCamera.pixelWidth * _renderScale), (int) (renderCamera.pixelHeight * _renderScale));
+            return new Vector2Int((int)(renderCamera.pixelWidth * _renderScale), (int)(renderCamera.pixelHeight * _renderScale));
         }
 
         private void SetupAutoReactiveDescription()
         {
-            // Set up the parameters to auto-generate a reactive mask
-            _genReactiveDescription.RenderSize = GetScaledRenderSize();
-            _genReactiveDescription.Scale = generateReactiveParameters.scale;
-            _genReactiveDescription.CutoffThreshold = generateReactiveParameters.cutoffThreshold;
-            _genReactiveDescription.BinaryValue = generateReactiveParameters.binaryValue;
-            _genReactiveDescription.Flags = generateReactiveParameters.flags;
+            var renderSize = GetScaledRenderSize();
+            if (_useFsr2)
+            {
+                // Set up the parameters to auto-generate a reactive mask
+                _Fsr2genReactiveDescription.RenderSize = renderSize;
+                _Fsr2genReactiveDescription.Scale = generateReactiveParameters.scale;
+                _Fsr2genReactiveDescription.CutoffThreshold = generateReactiveParameters.cutoffThreshold;
+                _Fsr2genReactiveDescription.BinaryValue = generateReactiveParameters.binaryValue;
+                _Fsr2genReactiveDescription.Flags = generateReactiveParameters.fsr2flags;
+            }
+            else
+            {
+                // Set up the parameters to auto-generate a reactive mask
+                _genReactiveDescription.RenderSize = renderSize;
+                _genReactiveDescription.Scale = generateReactiveParameters.scale;
+                _genReactiveDescription.CutoffThreshold = generateReactiveParameters.cutoffThreshold;
+                _genReactiveDescription.BinaryValue = generateReactiveParameters.binaryValue;
+                _genReactiveDescription.Flags = generateReactiveParameters.flags;
+            }
 
             if (_opaqueOnlyColorBuffer != null)
             {
                 _opaqueOnlyColorBuffer.Release();
                 _opaqueOnlyColorBuffer = null;
             }
-            _opaqueOnlyColorBuffer = RTHandles.Alloc(_genReactiveDescription.RenderSize.x, _genReactiveDescription.RenderSize.y, enableRandomWrite: false, colorFormat: _graphicsFormat, msaaSamples: MSAASamples.None, name: "fsr.opaque.only");
+            _opaqueOnlyColorBuffer = RTHandles.Alloc(renderSize.x, renderSize.y, enableRandomWrite: false, colorFormat: _graphicsFormat, msaaSamples: MSAASamples.None, name: "fsr.opaque.only");
             if (_afterOpaqueOnlyColorBuffer != null)
             {
                 _afterOpaqueOnlyColorBuffer.Release();
                 _afterOpaqueOnlyColorBuffer = null;
             }
-            _afterOpaqueOnlyColorBuffer = RTHandles.Alloc(_genReactiveDescription.RenderSize.x, _genReactiveDescription.RenderSize.y, enableRandomWrite: false, colorFormat: _graphicsFormat, msaaSamples: MSAASamples.None, name: "fsr.after.opaque");
+            _afterOpaqueOnlyColorBuffer = RTHandles.Alloc(renderSize.x, renderSize.y, enableRandomWrite: false, colorFormat: _graphicsFormat, msaaSamples: MSAASamples.None, name: "fsr.after.opaque");
             if (_reactiveMaskOutput != null)
             {
                 _reactiveMaskOutput.Release();
                 _reactiveMaskOutput = null;
             }
-            _reactiveMaskOutput = RTHandles.Alloc(_genReactiveDescription.RenderSize.x, _genReactiveDescription.RenderSize.y, enableRandomWrite: true, colorFormat: _graphicsFormat, msaaSamples: MSAASamples.None, name: "fsr.reactivemask");
+            _reactiveMaskOutput = RTHandles.Alloc(renderSize.x, renderSize.y, enableRandomWrite: true, colorFormat: _graphicsFormat, msaaSamples: MSAASamples.None, name: "fsr.reactivemask");
         }
 
         private void SetupDispatchDescription()
@@ -173,37 +209,71 @@ namespace YARG.Gameplay
             }
             _output = RTHandles.Alloc(renderCamera.pixelWidth, renderCamera.pixelHeight, enableRandomWrite: true, colorFormat: _graphicsFormat, msaaSamples: MSAASamples.None, name: "fsr.output");
 
-            // Set up the main FSR3 Upscaler dispatch parameters
-            _dispatchDescription.Exposure = ResourceView.Unassigned;
-            _dispatchDescription.Reactive = ResourceView.Unassigned;
-            _dispatchDescription.TransparencyAndComposition = ResourceView.Unassigned;
-
-            var scaledRenderSize = GetScaledRenderSize();
-
-            _dispatchDescription.Output = new ResourceView(_output);
-            _dispatchDescription.PreExposure = preExposure;
-            _dispatchDescription.EnableSharpening = performSharpenPass;
-            _dispatchDescription.Sharpness = sharpness;
-            _dispatchDescription.MotionVectorScale.x = -scaledRenderSize.x;
-            _dispatchDescription.MotionVectorScale.y = -scaledRenderSize.y;
-            _dispatchDescription.RenderSize = scaledRenderSize;
-            _dispatchDescription.UpscaleSize = _displaySize;
-            _dispatchDescription.FrameTimeDelta = Time.unscaledDeltaTime;
-            _dispatchDescription.CameraNear = renderCamera.nearClipPlane;
-            _dispatchDescription.CameraFar = renderCamera.farClipPlane;
-            _dispatchDescription.CameraFovAngleVertical = renderCamera.fieldOfView * Mathf.Deg2Rad;
-            _dispatchDescription.ViewSpaceToMetersFactor = 1.0f; // 1 unit is 1 meter in Unity
-            _dispatchDescription.VelocityFactor = velocityFactor;
-            _dispatchDescription.Reset = false;
-            _dispatchDescription.Flags = enableDebugView ? Fsr3Upscaler.DispatchFlags.DrawDebugView : 0;
-
-            if (SystemInfo.usesReversedZBuffer)
+            if (_useFsr2)
             {
-                (_dispatchDescription.CameraNear, _dispatchDescription.CameraFar) = (_dispatchDescription.CameraFar, _dispatchDescription.CameraNear);
-            }
+                // Set up the main FSR2 Upscaler dispatch parameters
+                _Fsr2dispatchDescription.Exposure = ResourceView.Unassigned;
+                _Fsr2dispatchDescription.Reactive = ResourceView.Unassigned;
+                _Fsr2dispatchDescription.TransparencyAndComposition = ResourceView.Unassigned;
 
-            // Set up the parameters for the optional experimental auto-TCR feature
-            _dispatchDescription.EnableAutoReactive = false;
+                var scaledRenderSize = GetScaledRenderSize();
+
+                _Fsr2dispatchDescription.Output = new ResourceView(_output);
+                _Fsr2dispatchDescription.PreExposure = preExposure;
+                _Fsr2dispatchDescription.EnableSharpening = performSharpenPass;
+                _Fsr2dispatchDescription.Sharpness = sharpness;
+                _Fsr2dispatchDescription.MotionVectorScale.x = -scaledRenderSize.x;
+                _Fsr2dispatchDescription.MotionVectorScale.y = -scaledRenderSize.y;
+                _Fsr2dispatchDescription.RenderSize = scaledRenderSize;
+                _Fsr2dispatchDescription.FrameTimeDelta = Time.unscaledDeltaTime;
+                _Fsr2dispatchDescription.CameraNear = renderCamera.nearClipPlane;
+                _Fsr2dispatchDescription.CameraFar = renderCamera.farClipPlane;
+                _Fsr2dispatchDescription.CameraFovAngleVertical = renderCamera.fieldOfView * Mathf.Deg2Rad;
+                _Fsr2dispatchDescription.ViewSpaceToMetersFactor = 1.0f; // 1 unit is 1 meter in Unity
+                _Fsr2dispatchDescription.Reset = false;
+
+                if (SystemInfo.usesReversedZBuffer)
+                {
+                    (_Fsr2dispatchDescription.CameraNear, _Fsr2dispatchDescription.CameraFar) = (_Fsr2dispatchDescription.CameraFar, _Fsr2dispatchDescription.CameraNear);
+                }
+
+                // Set up the parameters for the optional experimental auto-TCR feature
+                _Fsr2dispatchDescription.EnableAutoReactive = false;
+            }
+            else
+            {
+                // Set up the main FSR3 Upscaler dispatch parameters
+                _dispatchDescription.Exposure = ResourceView.Unassigned;
+                _dispatchDescription.Reactive = ResourceView.Unassigned;
+                _dispatchDescription.TransparencyAndComposition = ResourceView.Unassigned;
+
+                var scaledRenderSize = GetScaledRenderSize();
+
+                _dispatchDescription.Output = new ResourceView(_output);
+                _dispatchDescription.PreExposure = preExposure;
+                _dispatchDescription.EnableSharpening = performSharpenPass;
+                _dispatchDescription.Sharpness = sharpness;
+                _dispatchDescription.MotionVectorScale.x = -scaledRenderSize.x;
+                _dispatchDescription.MotionVectorScale.y = -scaledRenderSize.y;
+                _dispatchDescription.RenderSize = scaledRenderSize;
+                _dispatchDescription.UpscaleSize = _displaySize;
+                _dispatchDescription.FrameTimeDelta = Time.unscaledDeltaTime;
+                _dispatchDescription.CameraNear = renderCamera.nearClipPlane;
+                _dispatchDescription.CameraFar = renderCamera.farClipPlane;
+                _dispatchDescription.CameraFovAngleVertical = renderCamera.fieldOfView * Mathf.Deg2Rad;
+                _dispatchDescription.ViewSpaceToMetersFactor = 1.0f; // 1 unit is 1 meter in Unity
+                _dispatchDescription.VelocityFactor = velocityFactor;
+                _dispatchDescription.Reset = false;
+                _dispatchDescription.Flags = enableDebugView ? Fsr3Upscaler.DispatchFlags.DrawDebugView : 0;
+
+                if (SystemInfo.usesReversedZBuffer)
+                {
+                    (_dispatchDescription.CameraNear, _dispatchDescription.CameraFar) = (_dispatchDescription.CameraFar, _dispatchDescription.CameraNear);
+                }
+
+                // Set up the parameters for the optional experimental auto-TCR feature
+                _dispatchDescription.EnableAutoReactive = false;
+            }
         }
 
         private void ApplyMipmapBias(float biasOffset)
@@ -241,10 +311,20 @@ namespace YARG.Gameplay
         {
 
             var scaledRenderSize = GetScaledRenderSize();
-
-            // Perform custom jittering of the camera's projection matrix according to FSR3's recipe
-            int jitterPhaseCount = Fsr3Upscaler.GetJitterPhaseCount(scaledRenderSize.x, _displaySize.x);
-            Fsr3Upscaler.GetJitterOffset(out float jitterX, out float jitterY, Time.frameCount, jitterPhaseCount);
+            int jitterPhaseCount;
+            float jitterX, jitterY;
+            if (_useFsr2)
+            {
+                // Perform custom jittering of the camera's projection matrix according to FSR3's recipe
+                jitterPhaseCount = Fsr2.GetJitterPhaseCount(scaledRenderSize.x, _displaySize.x);
+                Fsr2.GetJitterOffset(out jitterX, out jitterY, Time.frameCount, jitterPhaseCount);
+            }
+            else
+            {
+                // Perform custom jittering of the camera's projection matrix according to FSR3's recipe
+                jitterPhaseCount = Fsr3Upscaler.GetJitterPhaseCount(scaledRenderSize.x, _displaySize.x);
+                Fsr3Upscaler.GetJitterOffset(out jitterX, out jitterY, Time.frameCount, jitterPhaseCount);
+            }
 
             _dispatchDescription.JitterOffset = new Vector2(jitterX, jitterY);
 
@@ -324,6 +404,11 @@ namespace YARG.Gameplay
                 _context.Destroy();
                 _context = null;
             }
+            if (_Fsr2context != null)
+            {
+                _Fsr2context.Destroy();
+                _Fsr2context = null;
+            }
         }
     }
 
@@ -394,22 +479,42 @@ namespace YARG.Gameplay
 
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
-            cmd = CommandBufferPool.Get("fsr3_execute");
+            cmd = CommandBufferPool.Get("fsr_execute");
 
-            _fsr._dispatchDescription.Color = new FidelityFX.ResourceView(renderingData.cameraData.renderer.cameraColorTarget, RenderTextureSubElement.Color);
-            _fsr._dispatchDescription.Depth = new FidelityFX.ResourceView(Shader.GetGlobalTexture(motionTexturePropertyID), RenderTextureSubElement.Depth);
-            _fsr._dispatchDescription.MotionVectors = new FidelityFX.ResourceView(Shader.GetGlobalTexture(motionTexturePropertyID));
-
-            if (_fsr.autoGenerateReactiveMask)
+            if (_fsr._useFsr2)
             {
-                _fsr._genReactiveDescription.ColorOpaqueOnly = new ResourceView(_fsr._opaqueOnlyColorBuffer);
-                _fsr._genReactiveDescription.ColorPreUpscale = new ResourceView(_fsr._afterOpaqueOnlyColorBuffer);
-                _fsr._genReactiveDescription.OutReactive = new ResourceView(_fsr._reactiveMaskOutput);
-                _fsr._context.GenerateReactiveMask(_fsr._genReactiveDescription, cmd);
-                _fsr._dispatchDescription.Reactive = new ResourceView(_fsr._reactiveMaskOutput);
-            }
+                _fsr._Fsr2dispatchDescription.Color = new FidelityFX.ResourceView(renderingData.cameraData.renderer.cameraColorTarget, RenderTextureSubElement.Color);
+                _fsr._Fsr2dispatchDescription.Depth = new FidelityFX.ResourceView(Shader.GetGlobalTexture(motionTexturePropertyID), RenderTextureSubElement.Depth);
+                _fsr._Fsr2dispatchDescription.MotionVectors = new FidelityFX.ResourceView(Shader.GetGlobalTexture(motionTexturePropertyID));
 
-            _fsr._context.Dispatch(_fsr._dispatchDescription, cmd);
+                if (_fsr.autoGenerateReactiveMask)
+                {
+                    _fsr._Fsr2genReactiveDescription.ColorOpaqueOnly = new ResourceView(_fsr._opaqueOnlyColorBuffer);
+                    _fsr._Fsr2genReactiveDescription.ColorPreUpscale = new ResourceView(_fsr._afterOpaqueOnlyColorBuffer);
+                    _fsr._Fsr2genReactiveDescription.OutReactive = new ResourceView(_fsr._reactiveMaskOutput);
+                    _fsr._Fsr2context.GenerateReactiveMask(_fsr._Fsr2genReactiveDescription, cmd);
+                    _fsr._Fsr2dispatchDescription.Reactive = new ResourceView(_fsr._reactiveMaskOutput);
+                }
+
+                _fsr._Fsr2context.Dispatch(_fsr._Fsr2dispatchDescription, cmd);
+            }
+            else
+            {
+                _fsr._dispatchDescription.Color = new FidelityFX.ResourceView(renderingData.cameraData.renderer.cameraColorTarget, RenderTextureSubElement.Color);
+                _fsr._dispatchDescription.Depth = new FidelityFX.ResourceView(Shader.GetGlobalTexture(motionTexturePropertyID), RenderTextureSubElement.Depth);
+                _fsr._dispatchDescription.MotionVectors = new FidelityFX.ResourceView(Shader.GetGlobalTexture(motionTexturePropertyID));
+
+                if (_fsr.autoGenerateReactiveMask)
+                {
+                    _fsr._genReactiveDescription.ColorOpaqueOnly = new ResourceView(_fsr._opaqueOnlyColorBuffer);
+                    _fsr._genReactiveDescription.ColorPreUpscale = new ResourceView(_fsr._afterOpaqueOnlyColorBuffer);
+                    _fsr._genReactiveDescription.OutReactive = new ResourceView(_fsr._reactiveMaskOutput);
+                    _fsr._context.GenerateReactiveMask(_fsr._genReactiveDescription, cmd);
+                    _fsr._dispatchDescription.Reactive = new ResourceView(_fsr._reactiveMaskOutput);
+                }
+
+                _fsr._context.Dispatch(_fsr._dispatchDescription, cmd);
+            }
 
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
