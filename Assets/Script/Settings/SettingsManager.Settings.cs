@@ -2,7 +2,6 @@
 using System.Net;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using YARG.Core;
 using YARG.Core.Audio;
 using YARG.Core.Logging;
 using YARG.Gameplay.HUD;
@@ -19,6 +18,7 @@ using YARG.Scores;
 using YARG.Settings.Types;
 using YARG.Song;
 using YARG.Venue;
+using static FidelityFX.FSR3.Fsr3Upscaler;
 
 namespace YARG.Settings
 {
@@ -220,6 +220,25 @@ namespace YARG.Settings
                     FullScreenMode.FullScreenWindow,
                     FullScreenMode.Windowed,
                 };
+
+            public DropdownSetting<QualityMode> VenueRenderingQuality { get; }
+                 = new(QualityMode.NativeAA, VenueQualityModeCallback)
+                 {
+                     QualityMode.NativeAA,
+                     QualityMode.UltraQuality,
+                     QualityMode.Quality,
+                     QualityMode.Balanced,
+                     QualityMode.Performance,
+                     QualityMode.UltraPerformance
+                 };
+
+            public DropdownSetting<VenueAntiAliasingMethod> VenueAntiAliasing { get; }
+                 = new(YARG.VenueAntiAliasingMethod.None, VenueAACallback)
+                 {
+                     YARG.VenueAntiAliasingMethod.None,
+                     YARG.VenueAntiAliasingMethod.FXAA,
+                     YARG.VenueAntiAliasingMethod.MSAA,
+                 };
 
             public ResolutionSetting Resolution { get; } = new(ResolutionCallback);
             public ToggleSetting FpsStats { get; } = new(false, FpsCounterCallback);
@@ -490,6 +509,11 @@ namespace YARG.Settings
                 StatsManager.Instance.SetShowing(StatsManager.Stat.FPS, value);
             }
 
+            private static void VenueAACallback(VenueAntiAliasingMethod value)
+            {
+                GraphicsManager.Instance.VenueAntiAliasing = value;
+            }
+
             private static void FpsCapCallback(int value)
             {
                 Application.targetFrameRate = value;
@@ -504,6 +528,17 @@ namespace YARG.Settings
                 }
 
                 Screen.fullScreenMode = value;
+            }
+
+            private static void VenueQualityModeCallback(QualityMode value)
+            {
+                // Unity saves this information automatically
+                if (!IsInitialized)
+                {
+                    return;
+                }
+
+                GraphicsManager.Instance.VenueRenderScale = 1.0f / GetUpscaleRatioFromQualityMode(value);
             }
 
             private static void ResolutionCallback(Resolution? value)
