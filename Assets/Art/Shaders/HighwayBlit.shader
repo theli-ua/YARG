@@ -57,18 +57,34 @@ Shader "HighwayBlit"
             float _CurveFactor;
             float _IsFading;
 
+            float2 getDisplacedPixel(float2 uv) : float2
+            {
+                #if UNITY_REVERSED_Z
+                    real depth = SampleSceneDepth(uv);
+                #else
+                    // Adjust Z to match NDC for OpenGL ([-1, 1])
+                    real depth = lerp(UNITY_NEAR_CLIP_VALUE, 1, SampleSceneDepth(uv));
+                #endif
+
+                float sceneEyeDepth = LinearEyeDepth(depth, _ZBufferParams);
+                
+                // Apply curving
+                uv.y += pow(abs(uv.x - 0.5), 2) * (_CurveFactor / 5.0 * (1.0 + sceneEyeDepth));
+                return uv;
+            }
+
             float4 frag (Varyings IN) : SV_Target
             {
                 // Apply curving
-                IN.uv.y += pow(abs(IN.uv.x - 0.5), 2) * _CurveFactor;
+                float2 uv = getDisplacedPixel(IN.uv);
                 
-                float4 color = SAMPLE_TEXTURE2D_X(_MainTex, sampler_MainTex, IN.uv);
+                float4 color = SAMPLE_TEXTURE2D_X(_MainTex, sampler_MainTex, uv);
                 // Sample the depth from the Camera depth texture.
                 #if UNITY_REVERSED_Z
-                    real depth = SampleSceneDepth(IN.uv);
+                    real depth = SampleSceneDepth(uv);
                 #else
                     // Adjust Z to match NDC for OpenGL ([-1, 1])
-                    real depth = lerp(UNITY_NEAR_CLIP_VALUE, 1, SampleSceneDepth(in.UV));
+                    real depth = lerp(UNITY_NEAR_CLIP_VALUE, 1, SampleSceneDepth(uv));
                 #endif
 
                 float sceneEyeDepth = LinearEyeDepth(depth, _ZBufferParams);
