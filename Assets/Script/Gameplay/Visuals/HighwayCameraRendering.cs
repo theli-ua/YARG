@@ -15,6 +15,10 @@ namespace YARG.Gameplay.Visuals
         public float zeroFadePosition = 3.0F;
         [Range(0.00F, 5.0F)]
         public float fadeSize = 1.25F;
+        [Range(1.00F, 64.0F)]
+        public float tesselationFactor = 8F;
+
+        public bool debugTesselation = false;
 
         private Camera _renderCamera;
         private CurveFadePass _curveFadePass;
@@ -23,9 +27,13 @@ namespace YARG.Gameplay.Visuals
         private float _prevZeroFade;
         private float _prevFadeSize;
         private float _prevCurveFactor;
+        private float _prevTesselationFactor;
+        private bool _prevDebugTessellation;
 
         private static readonly int _curveFactor = Shader.PropertyToID("_CurveFactor");
+        private static readonly int _TesselationFactor = Shader.PropertyToID("_TessellationFactor");
         private static readonly int _FadeParams = Shader.PropertyToID("_FadeParams");
+        private static readonly int _DebugTessellation = Shader.PropertyToID("_DebugTessellation");
 
         protected internal Material _Material;
 
@@ -56,7 +64,7 @@ namespace YARG.Gameplay.Visuals
                 return;
             }
 
-            if (_prevCurveFactor != curveFactor || _prevZeroFade != zeroFadePosition || _prevFadeSize != fadeSize)
+            if (_prevCurveFactor != curveFactor || _prevZeroFade != zeroFadePosition || _prevFadeSize != fadeSize || _prevTesselationFactor != tesselationFactor)
             {
                 UpdateParams();
             }
@@ -80,10 +88,14 @@ namespace YARG.Gameplay.Visuals
             _Material.SetVector(_FadeParams, new Vector2(fadeStart, fadeEnd));
 
             _Material.SetFloat(_curveFactor, curveFactor);
+            _Material.SetFloat(_TesselationFactor, tesselationFactor);
+            _Material.SetFloat(_DebugTessellation, debugTesselation ? 1.0f : 0.0f);
 
             _prevCurveFactor = _curveFactor;
             _prevZeroFade = zeroFadePosition;
+            _prevTesselationFactor = tesselationFactor;
             _prevFadeSize = fadeSize;
+            _prevDebugTessellation = debugTesselation;
         }
 
         // Curve and Fade could be separate render passes however
