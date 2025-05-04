@@ -21,43 +21,24 @@ float LinearEyeDepth(float z, float4 zBufferParams)
     return 1.0 / (zBufferParams.z * z + zBufferParams.w);
 }
 
-// Function to get displaced UV coordinates based on depth and curve factor
-float2 GetDisplacedPixel(float2 uv)
-{
-    // Sample depth
-    float depth = _DepthTexture.SampleLevel(sampler_LinearClamp, uv, 0);
-    
-    // Convert to eye depth
-    float sceneEyeDepth = LinearEyeDepth(depth, _ZBufferParams);
-    
-    // Apply curving effect
-    float2 result = uv;
-    result.y += pow(abs(uv.x - 0.5), 2) * (_CurveFactor / 5.0 * (1.0 + sceneEyeDepth));
-    
-    return result;
-}
-
 [numthreads(8, 8, 1)]
 void CSHighwayEffect(uint3 id : SV_DispatchThreadID)
 {
     // Convert to UV space
     float2 uv = (id.xy + 0.5) * _SourceTexture_TexelSize.xy;
-    
-    // Get displaced UV
-    float2 displacedUV = GetDisplacedPixel(uv);
-    
+   
     // Sample color with displaced UV
-    float4 color = _SourceTexture.SampleLevel(sampler_LinearClamp, displacedUV, 0);
+    float4 color = _SourceTexture.SampleLevel(sampler_LinearClamp, uv, 0);
     
-    // Sample depth again at displaced UV for alpha calculation
-    float depth = _DepthTexture.SampleLevel(sampler_LinearClamp, displacedUV, 0);
+    // Sample depth
+    float depth = _DepthTexture.SampleLevel(sampler_LinearClamp, uv, 0);
     float sceneEyeDepth = LinearEyeDepth(depth, _ZBufferParams);
     
     // Calculate alpha based on depth
     float rate = _FadeParams.y != _FadeParams.x ? 1.0 / (_FadeParams.y - _FadeParams.x) : 0.0;
     float alpha = smoothstep(0.0, 1.0, ((min(max(sceneEyeDepth, _FadeParams.x), _FadeParams.y)) - _FadeParams.x) * rate);
     
-    // Apply alpha transformation the same way as original shader
+    // Apply alpha transformation
     color.a = color.a == 0.0 ? 0.0 : max(1.0 - _IsFading, min(color.a, 1.0 - alpha));
     
     // Write result to destination

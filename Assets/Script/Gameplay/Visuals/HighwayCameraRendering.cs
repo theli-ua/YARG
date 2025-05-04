@@ -38,8 +38,15 @@ namespace YARG.Gameplay.Visuals
         {
             RenderPipelineManager.beginCameraRendering += OnPreCameraRender;
             UpdateParams();
-            rt = new RenderTexture(_renderCamera.pixelWidth, _renderCamera.pixelWidth, 0, UnityEngine.Experimental.Rendering.DefaultFormat.HDR);
-            rt.enableRandomWrite = true;
+
+            var descriptor = new RenderTextureDescriptor(
+                Screen.width, Screen.height,
+                RenderTextureFormat.ARGBHalf);
+            descriptor.mipCount = 0;
+            descriptor.enableRandomWrite = true;
+            var renderTexture = new RenderTexture(descriptor);
+
+            rt = new RenderTexture(descriptor);
             rt.Create();
         }
 
@@ -106,13 +113,14 @@ namespace YARG.Gameplay.Visuals
             private static readonly int CurveFactorID = Shader.PropertyToID("_CurveFactor");
             private static readonly int IsFadingID = Shader.PropertyToID("_IsFading");
             private static readonly int SourceTexture_TexelSizeID = Shader.PropertyToID("_SourceTexture_TexelSize");
+            private static readonly int depthTexturePropertyID = Shader.PropertyToID("_CameraDepthTexture");
+            private static readonly int motionTexturePropertyID = Shader.PropertyToID("_MotionVectorTexture");
 
             private ComputeShader computeShader;
 
             private ProfilingSampler _ProfilingSampler = new ProfilingSampler("HighwayBlit");
             private CommandBuffer _cmd;
             private HighwayCameraRendering _highwayCameraRendering;
-            MethodInfo SwapColorBuffer = null;
 
             public CurveFadePass(HighwayCameraRendering highCamRend)
             {
@@ -134,27 +142,14 @@ namespace YARG.Gameplay.Visuals
                 Camera camera = renderingData.cameraData.camera;
                 CommandBuffer cmd = CommandBufferPool.Get("HighwayBlit");
 
-                if (SwapColorBuffer == null)
-                {
-                    SwapColorBuffer = renderer.GetType().GetMethod("SwapColorBuffer", BindingFlags.NonPublic | BindingFlags.Instance);
-                }
-
                 using (new ProfilingScope(cmd, _ProfilingSampler))
                 {
-                    // cmd.SetGlobalTexture(_MainTex, renderer.cameraColorTarget);
-
                     // Get camera color and depth textures
                     var sourceTextureHandle = renderer.cameraColorTarget;
-                    var cameraDepthTargetIdent = renderer.cameraDepthTarget;
-
-                    // Force color buffer swap
-                    // SwapColorBuffer.Invoke(renderer, new object[] { cmd });
-                    // cmd.SetRenderTarget(renderer.cameraColorTarget);
-                    // cmd.ClearRenderTarget(RTClearFlags.ColorDepth, Color.clear, 0, 0);
 
                     // Set compute shader parameters
                     cmd.SetComputeTextureParam(computeShader, kernelHandle, SourceTextureID, sourceTextureHandle);
-                    cmd.SetComputeTextureParam(computeShader, kernelHandle, DepthTextureID, cameraDepthTargetIdent);
+                    cmd.SetComputeTextureParam(computeShader, kernelHandle, DepthTextureID, Shader.GetGlobalTexture(depthTexturePropertyID), 0, RenderTextureSubElement.Depth);
                     cmd.SetComputeTextureParam(computeShader, kernelHandle, DestinationTextureID, _highwayCameraRendering.rt);
 
                     // Set parameters
@@ -195,9 +190,6 @@ namespace YARG.Gameplay.Visuals
 
                     // Blit back
                     cmd.Blit(_highwayCameraRendering.rt, sourceTextureHandle);
-
-                    // //The RenderingUtils.fullscreenMesh argument specifies that the mesh to draw is a quad.
-                    // cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, _highwayCameraRendering._Material);
                 }
                 context.ExecuteCommandBuffer(cmd);
                 cmd.Clear();
