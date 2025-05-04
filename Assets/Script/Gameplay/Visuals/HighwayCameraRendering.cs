@@ -147,6 +147,8 @@ namespace YARG.Gameplay.Visuals
                     // Get camera color and depth textures
                     var sourceTextureHandle = renderer.cameraColorTarget;
 
+                    cmd.SetRenderTarget(_highwayCameraRendering.rt);
+                    cmd.ClearRenderTarget(RTClearFlags.Color, Color.clear, 0, 0);
                     // Set compute shader parameters
                     cmd.SetComputeTextureParam(computeShader, kernelHandle, SourceTextureID, sourceTextureHandle);
                     cmd.SetComputeTextureParam(computeShader, kernelHandle, DepthTextureID, Shader.GetGlobalTexture(depthTexturePropertyID), 0, RenderTextureSubElement.Depth);
