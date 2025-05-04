@@ -113,6 +113,11 @@ Shader "HighwayBlit"
                     patch[1].uv * p1 +
                     patch[2].uv * p2;
 
+                // float depth = tex2Dlod(sampler_CameraDepthTexture, float4(texUV, 0.0, 0.0));
+                // float depth = 0.5;
+                float depth = _CameraDepthTexture.SampleLevel(sampler_CameraDepthTexture, texUV, 0.0, 0.0);
+                float sceneEyeDepth = LinearEyeDepth(depth, _ZBufferParams);
+                positionCS.y -= (sceneEyeDepth - 3.0) * _CurveFactor * 0.2 * (positionCS.x * positionCS.x);
                 // Ensure vertex positions stay precisely where they should be
                 positionCS = float4(positionCS.xy, 0.0, 1.0);
 

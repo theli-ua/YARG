@@ -15,7 +15,7 @@ namespace YARG.Gameplay.Visuals
         public float zeroFadePosition = 3.0F;
         [Range(0.00F, 5.0F)]
         public float fadeSize = 1.25F;
-        [Range(1.00F, 64.0F)]
+        [Range(1.00F, 512.0F)]
         public float tesselationFactor = 8F;
 
         public bool debugTesselation = false;
