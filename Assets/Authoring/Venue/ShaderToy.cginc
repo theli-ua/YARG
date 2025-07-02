@@ -1,5 +1,3 @@
-#define iResolution _ScreenParams
-#define gl_FragCoord ((_iParam.scrPos.xy/_iParam.scrPos.w) * _ScreenParams.xy)
 #define vec2 float2
 #define vec3 float3
 #define vec4 float4
@@ -13,6 +11,10 @@
 #define mix lerp
 #define texture tex2D
 #define iChannel0 _MainTex
+
+#ifndef UNITY_CUSTOM_TEXTURE_INCLUDED
+#define iResolution _ScreenParams
+#define gl_FragCoord ((_iParam.scrPos.xy/_iParam.scrPos.w) * _ScreenParams.xy)
 
 struct appdata_t
 {
@@ -43,3 +45,12 @@ v2f vert(appdata_t v)
     
     return OUT;
 }
+
+#else
+
+#pragma vertex CustomRenderTextureVertexShader
+#pragma fragment frag
+                
+
+
+#endif // UNITY_CUSTOM_TEXTURE_INCLUDED
