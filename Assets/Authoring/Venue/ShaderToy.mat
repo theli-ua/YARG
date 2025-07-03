@@ -8,7 +8,7 @@ Material:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: ShaderToy
-  m_Shader: {fileID: 4800000, guid: 880524519f6fba180a188060a624f503, type: 3}
+  m_Shader: {fileID: 4800000, guid: 17c9017ff1797d60183cc20b49906b66, type: 3}
   m_ValidKeywords: []
   m_InvalidKeywords:
   - _FLIPBOOKBLENDING_OFF
