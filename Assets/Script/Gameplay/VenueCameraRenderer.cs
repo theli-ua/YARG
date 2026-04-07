@@ -350,6 +350,7 @@ namespace YARG.Gameplay
             // Set target texture and enable the camera so it renders through the normal pipeline
             _renderCamera.targetTexture = VenueTexture;
             _renderCamera.enabled = true;
+            _renderCamera.allowDynamicResolution = true;
         }
 
         private Material CreateMaterial(string shaderName)
