@@ -328,16 +328,12 @@ namespace YARG.Gameplay.Visuals
                 _highwaysDepthTexture.Release();
             }
 
-            float scaling = 1.0f;
+            float scaling = GraphicsManager.Instance.VenueRenderScale;
 
             // Create color texture (alpha mask) - no MSAA needed for mask
             var colorDescriptor = new RenderTextureDescriptor(
                 (int)(Screen.width * scaling), (int)(Screen.height * scaling),
-                RenderTextureFormat.RFloat)
-            {
-                mipCount = 0,
-                msaaSamples = 1
-            };
+                RenderTextureFormat.RFloat);
             _highwaysAlphaTexture = new RenderTexture(colorDescriptor);
             _highwaysAlphaTextureHandle = RTHandles.Alloc(_highwaysAlphaTexture);
             Shader.SetGlobalTexture(YargHighwaysAlphaTextureID, _highwaysAlphaTexture);
@@ -345,12 +341,7 @@ namespace YARG.Gameplay.Visuals
             // Create matching depth texture - no MSAA needed
             var depthDescriptor = new RenderTextureDescriptor(
                 (int)(Screen.width * scaling), (int)(Screen.height * scaling),
-                RenderTextureFormat.Depth)
-            {
-                mipCount = 0,
-                msaaSamples = 1,
-                depthBufferBits = 24
-            };
+                RenderTextureFormat.Depth, 16);
             _highwaysDepthTexture = new RenderTexture(depthDescriptor);
             _highwaysDepthTextureHandle = RTHandles.Alloc(_highwaysDepthTexture);
         }
@@ -419,6 +410,7 @@ namespace YARG.Gameplay.Visuals
             renderer.EnqueuePass(_cleanupPass);
             renderer.EnqueuePass(_venuePass);
         }
+
         private void LateUpdate()
         {
             if (!_allowTextureRecreation)
