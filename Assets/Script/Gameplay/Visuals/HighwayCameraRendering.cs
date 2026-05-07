@@ -69,7 +69,7 @@ namespace YARG.Gameplay.Visuals
         public static readonly int YargFadeParamsID = Shader.PropertyToID("_YargFadeParams");
         public static readonly int YargHighwaysAlphaTextureID = Shader.PropertyToID("_YargHighwaysAlphaMask");
 
-        private void OnEnable()
+        private void Awake()
         {
             _gameManager = FindAnyObjectByType<GameManager>();
             _renderCamera = GetComponent<Camera>();
@@ -328,7 +328,7 @@ namespace YARG.Gameplay.Visuals
                 _highwaysDepthTexture.Release();
             }
 
-            float scaling = GraphicsManager.Instance.VenueRenderScale;
+            float scaling = GraphicsManager.Instance == null ? 1.0f : GraphicsManager.Instance.VenueRenderScale;
 
             // Create color texture (alpha mask) - no MSAA needed for mask
             var colorDescriptor = new RenderTextureDescriptor(

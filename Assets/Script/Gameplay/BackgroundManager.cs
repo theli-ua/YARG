@@ -159,17 +159,19 @@ namespace YARG.Gameplay
             }
 
             _type = result.Type;
-            VenueCameraRenderer.CreateUnscaledBackgroundTexture();
+            VenueCameraRenderer.VenueCameraRendererStatics.Initialize();
             switch (_type)
             {
                 case BackgroundType.Yarground:
                     LoadYarground(result).Forget();
                     break;
                 case BackgroundType.Video:
+                    VenueCameraRenderer.CreateUnscaledBackgroundTexture();
                     LoadVideoBackground(result);
                     ShowVenue();
                     break;
                 case BackgroundType.Image:
+                    VenueCameraRenderer.CreateUnscaledBackgroundTexture();
                     Graphics.Blit(result.Image.LoadTexture(false), VenueCameraRenderer.VenueTexture, new Vector2(1, -1), new Vector2(0, 1));
                     ShowVenue();
                     break;
