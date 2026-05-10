@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
@@ -6,6 +7,7 @@ using static UnityEngine.Rendering.RenderGraphModule.Util.RenderGraphUtils;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
 using YARG.Core.Logging;
+using YARG.Gameplay.Visuals;
 using YARG.Helpers.UI;
 using YARG.Settings;
 using YARG.Venue.VolumeComponents;
@@ -19,10 +21,13 @@ namespace YARG.Gameplay
         [Range(0.01F, 1.0F)]
         public float renderScale = 1.0F;
 
-        private Camera _renderCamera;
+        internal Camera _renderCamera;
         private UniversalRenderPipelineAsset UniversalRenderPipelineAsset;
+        public Camera NoVenueCamera;
 
-        public static RenderTexture VenueTexture { get => VenueCameraRendererStatics.VenueTexture; }
+        /// <summary>Shim - returns trails texture. Will be removed after BackgroundManager migration.</summary>
+        [Obsolete("Use _trailsTexture directly or BackgroundManager RT. Will be removed.")]
+        public static RenderTexture VenueTexture { get => VenueCameraRendererStatics._trailsTexture; }
         public static float TargetFPS { get => VenueCameraRendererStatics.TargetFPS; }
         public static float ActualFPS { get => VenueCameraRendererStatics.ActualFPS; }
 
@@ -34,6 +39,8 @@ namespace YARG.Gameplay
             _renderCamera.enabled = false;
 
             _renderCamera.allowMSAA = false;
+            _renderCamera.targetTexture = null;
+
             var cameraData = _renderCamera.GetUniversalAdditionalCameraData();
             cameraData.antialiasing = AntialiasingMode.None;
             switch (GraphicsManager.Instance.VenueAntiAliasing)
@@ -53,19 +60,50 @@ namespace YARG.Gameplay
             }
             UniversalRenderPipelineAsset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
 
+            // Create render passes
+            VenueCameraRendererStatics._highwayCompositePass = new HighwayCompositePass();
+            VenueCameraRendererStatics._noVenueBackgroundPass = new NoVenueBackgroundPass();
+
             VenueCameraRendererStatics.RecreateTextures();
+
+            // Create No Venue camera for FPS skips and image/video backgrounds
+            CreateNoVenueCamera();
+        }
+
+        private void CreateNoVenueCamera()
+        {
+            var go = new GameObject("No Venue Camera");
+            go.layer = gameObject.layer;
+            NoVenueCamera = go.AddComponent<Camera>();
+            NoVenueCamera.enabled = false;
+            NoVenueCamera.orthographic = true;
+            NoVenueCamera.orthographicSize = 5f;
+            NoVenueCamera.nearClipPlane = 0.1f;
+            NoVenueCamera.farClipPlane = 10f;
+            NoVenueCamera.clearFlags = CameraClearFlags.SolidColor;
+            NoVenueCamera.backgroundColor = Color.black;
+            NoVenueCamera.cullingMask = 0; // Don't render any scene objects
+            NoVenueCamera.allowMSAA = false;
+
+            var noVenueData = NoVenueCamera.GetUniversalAdditionalCameraData();
+            noVenueData.renderType = CameraRenderType.Base;
         }
 
         public static void CreateUnscaledBackgroundTexture()
         {
             VenueCameraRendererStatics.RecreateTextures();
-            ScalableBufferManager.ResizeBuffers(1.0f, 1.0f);
         }
 
         private void OnEnable()
         {
             RenderPipelineManager.beginCameraRendering += OnPreCameraRender;
             RenderPipelineManager.endCameraRendering += OnEndCameraRender;
+
+            // Safety: disable No Venue camera when venue camera is enabled
+            if (NoVenueCamera != null)
+            {
+                NoVenueCamera.enabled = false;
+            }
         }
 
         private void OnDisable()
@@ -128,8 +166,21 @@ namespace YARG.Gameplay
                     VenueCameraRendererStatics._fpsWindowStart = currentFrameTime;
                 }
 
+                // Venue renders — disable No Venue camera, enable venue camera
+                if (NoVenueCamera != null)
+                {
+                    NoVenueCamera.enabled = false;
+                }
                 Render();
                 VenueCameraRendererStatics._frameAccumulator -= frameInterval;
+            }
+            else
+            {
+                // Venue skips — enable No Venue camera to show last frame
+                if (NoVenueCamera != null)
+                {
+                    NoVenueCamera.enabled = true;
+                }
             }
         }
 
@@ -142,7 +193,6 @@ namespace YARG.Gameplay
 
             // Disable the camera after rendering so it only renders when explicitly triggered
             _renderCamera.enabled = false;
-            _renderCamera.targetTexture = null;
 
             Shader.SetGlobalInteger(VenueCameraRendererStatics._posterizeStepsId, 0);
             Shader.SetGlobalFloat(VenueCameraRendererStatics._startTimeId, 0);
@@ -153,6 +203,19 @@ namespace YARG.Gameplay
 
         private void OnPreCameraRender(ScriptableRenderContext ctx, Camera cam)
         {
+            // Handle No Venue camera
+            if (cam == NoVenueCamera)
+            {
+                var noVenueRenderer = cam.GetUniversalAdditionalCameraData().scriptableRenderer;
+                if (noVenueRenderer != null)
+                {
+                    noVenueRenderer.EnqueuePass(VenueCameraRendererStatics._noVenueBackgroundPass);
+                    noVenueRenderer.EnqueuePass(VenueCameraRendererStatics._highwayCompositePass);
+                }
+                return;
+            }
+
+            // Handle venue camera
             if (cam != _renderCamera)
             {
                 return;
@@ -212,48 +275,39 @@ namespace YARG.Gameplay
 
             var renderer = _renderCamera.GetUniversalAdditionalCameraData().scriptableRenderer;
             renderer.EnqueuePass(VenueCameraRendererStatics._pass);
+            renderer.EnqueuePass(VenueCameraRendererStatics._highwayCompositePass);
         }
 
         private void Render()
         {
-            // Set target texture and enable the camera so it renders through the normal pipeline
-            _renderCamera.targetTexture = VenueTexture;
+            // Render directly to backbuffer (no intermediate RT)
+            _renderCamera.targetTexture = null;
             _renderCamera.enabled = true;
-            _renderCamera.allowDynamicResolution = true;
         }
 
 
         public sealed class VenuePostPostProcessingPass : ScriptableRenderPass
         {
-            private readonly Material _alphaFixMaterial;
-
             public VenuePostPostProcessingPass()
             {
                 renderPassEvent = RenderPassEvent.AfterRenderingPostProcessing;
-                _alphaFixMaterial = VenueCameraRendererStatics._alphaFixMaterial;
             }
 
             public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
             {
                 UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
 
+                // Copy composited frame (venue + highways) to trails texture
+                // This is used by No Venue camera to show the last rendered frame during FPS skips
                 TextureHandle source = resourceData.activeColorTexture;
                 TextureHandle trailsTexture = renderGraph.ImportTexture(VenueCameraRendererStatics._trailsTextureHandle);
 
-                // Blit through alpha-fix shader to force alpha to 1.0, preventing transparency artifacts
-                // when the venue renders without post-processing (UberPP doesn't run to fix alpha).
-
-                var blitParams = new BlitMaterialParameters(source, trailsTexture, _alphaFixMaterial, 0);
-                renderGraph.AddBlitPass(blitParams, passName: "Venue Alpha Fix / Trails Copy");
-
-                // Update cameraColor so the final blit uses the alpha-fixed texture.
-                resourceData.cameraColor = trailsTexture;
+                renderGraph.AddCopyPass(source, trailsTexture, passName: "Trails Frame Copy");
             }
         }
 
         public static class VenueCameraRendererStatics
         {
-            public static RenderTexture VenueTexture { get; private set; }
             public static RenderTexture _trailsTexture;
             public static RTHandle _trailsTextureHandle;
 
@@ -271,7 +325,8 @@ namespace YARG.Gameplay
             public static readonly string[] _mirrorKeywords = { "YARG_MIRROR_LEFT", "YARG_MIRROR_RIGHT", "YARG_MIRROR_CLOCK_CCW", "YARG_MIRROR_NONE" };
 
             public static VenuePostPostProcessingPass _pass;
-            public static Material _alphaFixMaterial;
+            public static HighwayCompositePass _highwayCompositePass;
+            public static NoVenueBackgroundPass _noVenueBackgroundPass;
 
             public static float ActualFPS;
             public static float TargetFPS;
@@ -310,7 +365,6 @@ namespace YARG.Gameplay
             {
                 SceneManager.sceneUnloaded += OnSceneUnloaded;
                 RecreateTextures();
-                _alphaFixMaterial = CreateMaterial("Hidden/YARG/VenueAlphaFix");
                 _pass = new VenuePostPostProcessingPass();
 
                 Shader.SetGlobalColor(_scanlineColor, Color.black);
@@ -331,12 +385,6 @@ namespace YARG.Gameplay
 
             public static void RecreateTextures()
             {
-                if (VenueTexture != null)
-                {
-                    VenueTexture.Release();
-                    VenueTexture.DiscardContents();
-                }
-
                 if (_trailsTexture != null)
                 {
                     _trailsTextureHandle?.Release();
@@ -345,33 +393,19 @@ namespace YARG.Gameplay
                     _trailsTexture.DiscardContents();
                 }
 
-                var descriptor = new RenderTextureDescriptor(Screen.width, Screen.height, RenderTextureFormat.DefaultHDR, 16, 0);
-                VenueTexture = new RenderTexture(descriptor);
-                VenueTexture.useDynamicScale = true;
-                VenueTexture.Create();
-
-                descriptor.depthBufferBits = 0;
+                var descriptor = new RenderTextureDescriptor(Screen.width, Screen.height, RenderTextureFormat.DefaultHDR, 0, 0);
                 _trailsTexture = new RenderTexture(descriptor);
                 _trailsTexture.filterMode = FilterMode.Bilinear;
                 _trailsTexture.wrapMode = TextureWrapMode.Clamp;
-                _trailsTexture.useDynamicScale = true;
                 _trailsTexture.Create();
                 _trailsTextureHandle = RTHandles.Alloc(_trailsTexture);
                 Shader.SetGlobalTexture(_trailsTextureId, _trailsTexture);
 
                 Graphics.Blit(Texture2D.blackTexture, _trailsTexture);
-                Graphics.Blit(Texture2D.blackTexture, VenueTexture);
             }
 
             private static void OnSceneUnloaded(Scene scene)
             {
-                if (VenueTexture != null)
-                {
-                    VenueTexture.Release();
-                    Destroy(VenueTexture);
-                    VenueTexture = null;
-                }
-
                 if (_trailsTexture != null)
                 {
                     _trailsTextureHandle?.Release();
@@ -380,7 +414,6 @@ namespace YARG.Gameplay
                     Destroy(_trailsTexture);
                     _trailsTexture = null;
                 }
-
             }
 
         }

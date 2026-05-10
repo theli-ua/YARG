@@ -5,10 +5,12 @@ using UnityEngine.Rendering;
 using UnityEngine.Rendering.RendererUtils;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.Rendering.RenderGraphModule;
+using UnityEngine.SceneManagement;
 using YARG.Core.Logging;
 using YARG.Gameplay.Player;
 using YARG.Helpers.UI;
 using YARG.Settings;
+using UnityEngine.Rendering.RenderGraphModule.Util;
 
 namespace YARG.Gameplay.Visuals
 {
@@ -38,18 +40,22 @@ namespace YARG.Gameplay.Visuals
         private Camera _renderCamera;
         private GameManager _gameManager;
 
-        private RenderTexture              _highwaysAlphaTexture;
-        private RenderTexture              _highwaysDepthTexture;
-        private RTHandle                   _highwaysAlphaTextureHandle;
-        private RTHandle                   _highwaysDepthTextureHandle;
-        private ScriptableRenderPass       _fadeCalcPass;
-        private ScriptableRenderPass       _cleanupPass;
-        private ScriptableRenderPass       _venuePass;
-        private bool                       _allowTextureRecreation = true;
-        private bool                       _needsInitialization    = true;
-        private bool                       _needsCameraReset;
-        private float                      _horizontalOffsetPx;
-        private float                      _scaleMultiplier = 1f;
+        private static RTHandle _highwaysDepthlessColorTextureHandle;
+
+        private RenderTexture _highwaysColorTexture;
+        private RenderTexture _highwaysDepthlessColorTexture;
+        private RenderTexture _highwaysAlphaTexture;
+        private RenderTexture _highwaysAlphaDepthTexture;
+        private RTHandle _highwaysAlphaTextureHandle;
+        private RTHandle _highwaysAlphaDepthTextureHandle;
+        private ScriptableRenderPass _fadeCalcPass;
+        private ScriptableRenderPass _cleanupPass;
+        private ScriptableRenderPass _copyPass;
+        private bool _allowTextureRecreation = true;
+        private bool _needsInitialization = true;
+        private bool _needsCameraReset;
+        private float _horizontalOffsetPx;
+        private float _scaleMultiplier = 1f;
         private int _vocalTrackCount = 0;
 
         private readonly float[] _curveFactors = new float[MAX_MATRICES];
@@ -68,6 +74,9 @@ namespace YARG.Gameplay.Visuals
         public static readonly int YargCurveFactorsID = Shader.PropertyToID("_YargCurveFactors");
         public static readonly int YargFadeParamsID = Shader.PropertyToID("_YargFadeParams");
         public static readonly int YargHighwaysAlphaTextureID = Shader.PropertyToID("_YargHighwaysAlphaMask");
+        public static readonly int YargHighwaysColorTextureID = Shader.PropertyToID("_YargHighwaysColorTexture");
+
+        public static RTHandle HighwaysColorTextureHandle => _highwaysDepthlessColorTextureHandle;
 
         private void Awake()
         {
@@ -75,13 +84,14 @@ namespace YARG.Gameplay.Visuals
             _renderCamera = GetComponent<Camera>();
             _fadeCalcPass ??= new FadePass(this);
             _cleanupPass ??= new CleanupPass();
-            _venuePass ??= new VenueUnderlayPass();
+            _copyPass ??= new HighwayCopyPass();
             _horizontalOffsetPx = 0f;
             _scaleMultiplier = 1f;
 
             RecreateHighwayOutputTexture();
             Shader.SetGlobalInteger(YargHighwaysNumberID, 0);
             RenderPipelineManager.beginCameraRendering += OnPreCameraRender;
+            SceneManager.sceneUnloaded += OnSceneUnloaded;
         }
 
         private void ResetCameras()
@@ -98,6 +108,25 @@ namespace YARG.Gameplay.Visuals
 
         private void RecreateHighwayOutputTexture()
         {
+            Cleanup();
+
+            // Combined Color + Depth texture for rendering
+            var colorDescriptor = new RenderTextureDescriptor(
+                Screen.width, Screen.height,
+                RenderTextureFormat.DefaultHDR, 16);
+            _highwaysColorTexture = new RenderTexture(colorDescriptor);
+            _highwaysColorTexture.Create();
+            _renderCamera.targetTexture = _highwaysColorTexture;
+
+            // I could not figure out how to use combined RenderTexture as source for blit in the RenderGraph pass, so we need a copy without depth
+            colorDescriptor.depthBufferBits = 0;
+            _highwaysDepthlessColorTexture = new RenderTexture(colorDescriptor);
+            _highwaysDepthlessColorTexture.Create();
+
+            _highwaysDepthlessColorTextureHandle = RTHandles.Alloc(_highwaysDepthlessColorTexture);
+            // Expose as global shader texture for HighwayCompositePass
+            Shader.SetGlobalTexture(YargHighwaysColorTextureID, _highwaysColorTexture);
+
             ResetHighwayAlphaTexture();
         }
 
@@ -180,14 +209,14 @@ namespace YARG.Gameplay.Visuals
 
             foreach (var camera in _cameras)
             {
-                camera.aspect = (float)Screen.width / Screen.height;
+                camera.aspect = (float) Screen.width / Screen.height;
             }
 
             //First pass, just scale according to aspect ratio, then recalculate matrices
             for (int i = 0; i < _cameras.Count; i++)
             {
                 //This works best for fake track player, but doesn't matter too much otherwise
-                var aspectScaleWidth = Screen.width / (float)Screen.height / (16f / 9f);
+                var aspectScaleWidth = Screen.width / (float) Screen.height / (16f / 9f);
                 _laneScales[i] = _allowTextureRecreation ? aspectScaleWidth : Math.Min(aspectScaleWidth, 1.0f);
             }
             UpdateCameraProjectionMatrices();
@@ -203,7 +232,7 @@ namespace YARG.Gameplay.Visuals
                     // Special case for single non-vocals highway
                     ? Math.Min(Screen.width, trackWidth)
                     // For multiple lanes, cap to a percentage of screen width and the scale factor to ensure padding
-                    : Math.Min(Screen.width * MAX_LANE_SCREEN_WIDTH_PERCENT, (float)Screen.width / HighwayCount() * MULTI_LANE_SCALE_FACTOR);
+                    : Math.Min(Screen.width * MAX_LANE_SCREEN_WIDTH_PERCENT, (float) Screen.width / HighwayCount() * MULTI_LANE_SCALE_FACTOR);
 
                 //Factor in scale multiplier (from hud scaling)
                 targetScreenWidth = Math.Min(Screen.width, targetScreenWidth * _scaleMultiplier);
@@ -323,16 +352,16 @@ namespace YARG.Gameplay.Visuals
                 _highwaysAlphaTexture.Release();
             }
 
-            if (_highwaysDepthTexture != null)
+            if (_highwaysAlphaDepthTexture != null)
             {
-                _highwaysDepthTexture.Release();
+                _highwaysAlphaDepthTexture.Release();
             }
 
             float scaling = GraphicsManager.Instance == null ? 1.0f : GraphicsManager.Instance.VenueRenderScale;
 
             // Create color texture (alpha mask) - no MSAA needed for mask
             var colorDescriptor = new RenderTextureDescriptor(
-                (int)(Screen.width * scaling), (int)(Screen.height * scaling),
+                Screen.width, Screen.height,
                 RenderTextureFormat.RFloat);
             _highwaysAlphaTexture = new RenderTexture(colorDescriptor);
             _highwaysAlphaTextureHandle = RTHandles.Alloc(_highwaysAlphaTexture);
@@ -340,15 +369,27 @@ namespace YARG.Gameplay.Visuals
 
             // Create matching depth texture - no MSAA needed
             var depthDescriptor = new RenderTextureDescriptor(
-                (int)(Screen.width * scaling), (int)(Screen.height * scaling),
+                Screen.width, Screen.height,
                 RenderTextureFormat.Depth, 16);
-            _highwaysDepthTexture = new RenderTexture(depthDescriptor);
-            _highwaysDepthTextureHandle = RTHandles.Alloc(_highwaysDepthTexture);
+            _highwaysAlphaDepthTexture = new RenderTexture(depthDescriptor);
+            _highwaysAlphaDepthTextureHandle = RTHandles.Alloc(_highwaysAlphaDepthTexture);
         }
 
-        private void OnDisable()
+        private void Cleanup()
         {
-            RenderPipelineManager.beginCameraRendering -= OnPreCameraRender;
+            if (_highwaysColorTexture != null)
+            {
+                _highwaysColorTexture.Release();
+                _highwaysColorTexture = null;
+            }
+
+            if (_highwaysDepthlessColorTexture != null)
+            {
+                _highwaysDepthlessColorTextureHandle?.Release();
+                _highwaysDepthlessColorTextureHandle = null;
+                _highwaysDepthlessColorTexture.Release();
+                _highwaysDepthlessColorTexture = null;
+            }
 
             if (_highwaysAlphaTexture != null)
             {
@@ -358,11 +399,30 @@ namespace YARG.Gameplay.Visuals
                 _highwaysAlphaTexture = null;
             }
 
-            if (_highwaysDepthTexture != null)
+            if (_highwaysAlphaDepthTexture != null)
             {
-                _highwaysDepthTexture.Release();
-                _highwaysDepthTexture = null;
+                _highwaysAlphaDepthTexture.Release();
+                _highwaysAlphaDepthTexture = null;
             }
+        }
+
+        private void OnDisable()
+        {
+            RenderPipelineManager.beginCameraRendering -= OnPreCameraRender;
+            SceneManager.sceneUnloaded -= OnSceneUnloaded;
+
+            Cleanup();
+
+            // Clear camera target
+            if (_renderCamera != null)
+            {
+                _renderCamera.targetTexture = null;
+            }
+        }
+
+        private void OnSceneUnloaded(Scene scene)
+        {
+            OnDisable();
         }
 
         private void OnPreCameraRender(ScriptableRenderContext ctx, Camera cam)
@@ -408,7 +468,7 @@ namespace YARG.Gameplay.Visuals
             var renderer = _renderCamera.GetUniversalAdditionalCameraData().scriptableRenderer;
             renderer.EnqueuePass(_fadeCalcPass);
             renderer.EnqueuePass(_cleanupPass);
-            renderer.EnqueuePass(_venuePass);
+            renderer.EnqueuePass(_copyPass);
         }
 
         private void LateUpdate()
@@ -496,8 +556,8 @@ namespace YARG.Gameplay.Visuals
         {
             private readonly ProfilingSampler _profilingSampler = new ProfilingSampler("CalcFadeAlphaMask");
             private readonly HighwayCameraRendering _highwayCameraRendering;
-            private readonly Material               _material;
-            private readonly ShaderTagId[]          _shaderTagIds = { new ShaderTagId("SRPDefaultUnlit"), new ShaderTagId("UniversalForward"), new ShaderTagId("UniversalForwardOnly") };
+            private readonly Material _material;
+            private readonly ShaderTagId[] _shaderTagIds = { new ShaderTagId("SRPDefaultUnlit"), new ShaderTagId("UniversalForward"), new ShaderTagId("UniversalForwardOnly") };
 
             public static readonly int LayerMask = ~(1 << UnityEngine.LayerMask.NameToLayer("FadeExclude"));
 
@@ -519,7 +579,7 @@ namespace YARG.Gameplay.Visuals
                     passData.material = _material;
 
                     var alphaTextureHandle = renderGraph.ImportTexture(_highwayCameraRendering._highwaysAlphaTextureHandle);
-                    var depthTextureHandle = renderGraph.ImportTexture(_highwayCameraRendering._highwaysDepthTextureHandle);
+                    var depthTextureHandle = renderGraph.ImportTexture(_highwayCameraRendering._highwaysAlphaDepthTextureHandle);
 
                     builder.SetRenderAttachment(alphaTextureHandle, 0, AccessFlags.WriteAll);
                     // Use our own depth texture with matching MSAA sample count
@@ -565,6 +625,30 @@ namespace YARG.Gameplay.Visuals
             }
         }
 
+        public sealed class HighwayCopyPass : ScriptableRenderPass
+        {
+            public HighwayCopyPass()
+            {
+                renderPassEvent = RenderPassEvent.AfterRendering;
+            }
+
+            public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
+            {
+                var resourceData = frameData.Get<UniversalResourceData>();
+
+                TextureHandle target = renderGraph.ImportTexture(HighwayCameraRendering.HighwaysColorTextureHandle);
+                TextureHandle source = resourceData.activeColorTexture;
+
+                renderGraph.AddCopyPass(source, target);
+            }
+
+            private class PassData
+            {
+                public TextureHandle highwaysColor;
+                public Material material;
+                public Vector4 scaleBias;
+            }
+        }
         // Disable highway rendering overrides
         // This is necessary because UI is rendered in context of the same camera
         private sealed class CleanupPass : ScriptableRenderPass
@@ -593,55 +677,7 @@ namespace YARG.Gameplay.Visuals
             }
         }
 
-        private sealed class VenueUnderlayPass : ScriptableRenderPass
-        {
-            private readonly ProfilingSampler _profilingSampler = new ProfilingSampler("VenueUnderlayPass");
-            private readonly Material _material;
 
-            public VenueUnderlayPass()
-            {
-                renderPassEvent = RenderPassEvent.AfterRendering + 1;
-                _material = new Material(Shader.Find("YargBackgroundUnderlay"));
-            }
-
-
-            public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
-            {
-                var resourceData = frameData.Get<UniversalResourceData>();
-                var venueTex = VenueCameraRenderer.VenueTexture;
-
-                using (var builder = renderGraph.AddRasterRenderPass<PassData>("VenueUnderlayPass", out var passData, _profilingSampler))
-                {
-                    builder.AllowPassCulling(false);
-                    builder.SetRenderAttachment(resourceData.activeColorTexture, 0, AccessFlags.Write);
-
-                    Vector4 scaleBias;
-
-                    // Check if we need to flip the UVs vertically
-                    // URP usually requires a flip when rendering to a RenderTexture on DX/Vulkan/Metal
-                    bool isFlipped = SystemInfo.graphicsUVStartsAtTop;
-
-                    if (isFlipped)
-                    {
-                        // Scale is (scaleX, -scaleY), Bias is (offsetX, offsetY)
-                        // We use 'scale' as the Y-bias to shift the negative coordinates back into 0-1 range
-                        scaleBias = new Vector4(1, -1, 0, 1);
-                    }
-                    else
-                    {
-                        scaleBias = new Vector4(1, 1, 0, 0);
-                    }
-
-                    builder.SetRenderFunc<PassData>((PassData data, RasterGraphContext context) =>
-                    {
-                        // Blitter.BlitTexture will now pass this scaleBias to the shader's _BlitScaleBias
-                        Blitter.BlitTexture(context.cmd, venueTex, scaleBias, _material, 0);
-                    });
-                }
-            }
-
-            private class PassData { }
-        }
 
         // Offset is defined from -1f to 1f
         public static float GetMultiplayerXOffset(int playerIndex, int totalPlayers, float magnitude)

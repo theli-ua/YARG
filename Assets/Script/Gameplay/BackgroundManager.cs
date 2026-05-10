@@ -7,6 +7,7 @@ using Cysharp.Threading.Tasks;
 using UniHumanoid;
 using UnityEngine;
 using UnityEngine.Animations;
+using UnityEngine.Rendering;
 using UnityEngine.Video;
 using YARG.Core.IO;
 using YARG.Core.Song;
@@ -49,6 +50,7 @@ namespace YARG.Gameplay
         public static int dimmerPropertyID = Shader.PropertyToID("_YargBackgroundAlpha");
 
         private float YARGROUND_OFFSET = 50f;
+        private RenderTexture _backgroundRT;
 
         // These values are relative to the video, not to song time!
         // A negative start time will delay when the video starts, a positive one will set the video position
@@ -146,6 +148,8 @@ namespace YARG.Gameplay
                 }
 
                 _type = BackgroundType.Yarground;
+                RoutePrevFrameToTrails();
+                SetNoVenueMode(false);
                 ShowVenue();
 
                 return;
@@ -166,15 +170,67 @@ namespace YARG.Gameplay
                     LoadYarground(result).Forget();
                     break;
                 case BackgroundType.Video:
-                    VenueCameraRenderer.CreateUnscaledBackgroundTexture();
+                    CreateBackgroundRT();
                     LoadVideoBackground(result);
+                    SetNoVenueMode(true);
                     ShowVenue();
                     break;
                 case BackgroundType.Image:
-                    VenueCameraRenderer.CreateUnscaledBackgroundTexture();
-                    Graphics.Blit(result.Image.LoadTexture(false), VenueCameraRenderer.VenueTexture, new Vector2(1, -1), new Vector2(0, 1));
+                    CreateBackgroundRT();
+                    var imageTex = result.Image.LoadTexture(false);
+                    Graphics.Blit(imageTex, _backgroundRT, new Vector2(1, -1), new Vector2(0, 1));
+                    Destroy(imageTex);
+                    RoutePrevFrameToBackground();
+                    SetNoVenueMode(true);
                     ShowVenue();
                     break;
+            }
+        }
+
+        private void CreateBackgroundRT()
+        {
+            if (_backgroundRT != null)
+            {
+                _backgroundRT.Release();
+            }
+
+            var descriptor = new RenderTextureDescriptor(Screen.width, Screen.height, RenderTextureFormat.DefaultHDR, 0, 0);
+            _backgroundRT = new RenderTexture(descriptor);
+            _backgroundRT.filterMode = FilterMode.Bilinear;
+            _backgroundRT.wrapMode = TextureWrapMode.Clamp;
+            _backgroundRT.Create();
+        }
+
+        private void RoutePrevFrameToBackground()
+        {
+            var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._trailsTextureId;
+            Shader.SetGlobalTexture(trailsTextureId, _backgroundRT);
+        }
+
+        private void RoutePrevFrameToTrails()
+        {
+            var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._trailsTextureId;
+            Shader.SetGlobalTexture(trailsTextureId, VenueCameraRenderer.VenueCameraRendererStatics._trailsTexture);
+        }
+
+        private void SetNoVenueMode(bool enabled)
+        {
+            var noVenueCam = GameManager.NoVenueCamera;
+            var venueRenderer = FindAnyObjectByType<VenueCameraRenderer>();
+
+            if (enabled)
+            {
+                // No Venue mode: show image/video background
+                if (noVenueCam != null)
+                    noVenueCam.enabled = true;
+                if (venueRenderer != null)
+                    venueRenderer._renderCamera.enabled = false;
+            }
+            else
+            {
+                // Venue mode: show 3D venue
+                if (noVenueCam != null)
+                    noVenueCam.enabled = false;
             }
         }
 
@@ -229,6 +285,10 @@ namespace YARG.Gameplay
             {
                 characterManager.Initialize();
             }
+
+            // Route _YargPrevFrame to trails texture for venue mode
+            RoutePrevFrameToTrails();
+            SetNoVenueMode(false);
             ShowVenue();
         }
 
@@ -316,7 +376,8 @@ namespace YARG.Gameplay
             _videoPlayer.prepareCompleted += OnVideoPrepared;
             _videoPlayer.seekCompleted += OnVideoSeeked;
             _videoPlayer.Prepare();
-            _videoPlayer.targetTexture = VenueCameraRenderer.VenueTexture;
+            _videoPlayer.targetTexture = _backgroundRT;
+            RoutePrevFrameToBackground();
             enabled = true;
         }
 
@@ -705,6 +766,12 @@ namespace YARG.Gameplay
 
         public void Dispose()
         {
+            if (_backgroundRT != null)
+            {
+                _backgroundRT.Release();
+                _backgroundRT = null;
+            }
+
             if (VIDEO_PATH != null)
             {
                 File.Delete(VIDEO_PATH);

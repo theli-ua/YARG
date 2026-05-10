@@ -94,6 +94,7 @@ namespace YARG.Gameplay
         public PracticeManager  PracticeManager  { get; private set; }
         public BackgroundManager BackgroundManager { get; private set; }
         public EngineManager EngineManager { get; private set; }
+        public Camera NoVenueCamera { get; private set; }
 
         public SongEntry Song  { get; private set; }
         public SongChart    Chart { get; private set; }
@@ -188,6 +189,12 @@ namespace YARG.Gameplay
             PracticeManager = GetComponent<PracticeManager>();
             BackgroundManager = GetComponent<BackgroundManager>();
             EngineManager = new EngineManager();
+
+            var venueCameraRenderer = FindAnyObjectByType<VenueCameraRenderer>();
+            if (venueCameraRenderer != null)
+            {
+                NoVenueCamera = venueCameraRenderer.NoVenueCamera;
+            }
 
             YargPlayers = PlayerContainer.Players;
 
