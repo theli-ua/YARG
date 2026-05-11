@@ -641,13 +641,6 @@ namespace YARG.Gameplay.Visuals
 
                 renderGraph.AddCopyPass(source, target);
             }
-
-            private class PassData
-            {
-                public TextureHandle highwaysColor;
-                public Material material;
-                public Vector4 scaleBias;
-            }
         }
         // Disable highway rendering overrides
         // This is necessary because UI is rendered in context of the same camera
