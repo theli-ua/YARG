@@ -60,11 +60,16 @@ namespace YARG.Gameplay
             }
             UniversalRenderPipelineAsset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
 
-            // Create render passes
-            VenueCameraRendererStatics._highwayCompositePass = new HighwayCompositePass();
-            VenueCameraRendererStatics._noVenueBackgroundPass = new NoVenueBackgroundPass();
+            // Initialize static state (passes, textures, shader globals)
+            // Guard in Initialize() prevents double-init if BackgroundManager also calls it
+            VenueCameraRendererStatics.Initialize();
 
-            VenueCameraRendererStatics.RecreateTextures();
+            // Create render passes (must happen on main thread after Initialize guard)
+            if (VenueCameraRendererStatics._highwayCompositePass == null)
+            {
+                VenueCameraRendererStatics._highwayCompositePass = new HighwayCompositePass();
+                VenueCameraRendererStatics._noVenueBackgroundPass = new NoVenueBackgroundPass();
+            }
 
             // Create No Venue camera for FPS skips and image/video backgrounds
             CreateNoVenueCamera();
@@ -370,8 +375,14 @@ namespace YARG.Gameplay
                 return CoreUtils.CreateEngineMaterial(shader);
             }
 
+            private static bool _isInitialized;
+
             public static void Initialize()
             {
+                if (_isInitialized)
+                    return;
+                _isInitialized = true;
+
                 SceneManager.sceneUnloaded += OnSceneUnloaded;
                 RecreateTextures();
                 _pass = new VenuePostPostProcessingPass();
