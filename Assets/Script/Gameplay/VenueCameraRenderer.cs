@@ -112,6 +112,15 @@ namespace YARG.Gameplay
             RenderPipelineManager.endCameraRendering -= OnEndCameraRender;
         }
 
+        private void OnDestroy()
+        {
+            if (NoVenueCamera != null)
+            {
+                Destroy(NoVenueCamera.gameObject);
+                NoVenueCamera = null;
+            }
+        }
+
         private void Update()
         {
             if (ScreenSizeDetector.HasScreenSizeChanged)
