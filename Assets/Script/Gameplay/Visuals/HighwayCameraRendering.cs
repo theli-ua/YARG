@@ -357,9 +357,7 @@ namespace YARG.Gameplay.Visuals
                 _highwaysAlphaDepthTexture.Release();
             }
 
-            float scaling = GraphicsManager.Instance == null ? 1.0f : GraphicsManager.Instance.VenueRenderScale;
-
-            // Create color texture (alpha mask) - no MSAA needed for mask
+            // Create color texture (alpha mask) - screen-res, no MSAA needed for mask
             var colorDescriptor = new RenderTextureDescriptor(
                 Screen.width, Screen.height,
                 RenderTextureFormat.RFloat);
