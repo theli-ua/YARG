@@ -1,4 +1,3 @@
-using System;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
@@ -26,9 +25,6 @@ namespace YARG.Gameplay
         private float _previousRenderScale;
         public Camera NoVenueCamera;
 
-        /// <summary>Shim - returns trails texture. Will be removed after BackgroundManager migration.</summary>
-        [Obsolete("Use _trailsTexture directly or BackgroundManager RT. Will be removed.")]
-        public static RenderTexture VenueTexture { get => VenueCameraRendererStatics._trailsTexture; }
         public static float TargetFPS { get => VenueCameraRendererStatics.TargetFPS; }
         public static float ActualFPS { get => VenueCameraRendererStatics.ActualFPS; }
 
