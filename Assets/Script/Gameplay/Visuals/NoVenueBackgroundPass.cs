@@ -9,6 +9,8 @@ namespace YARG.Gameplay.Visuals
     /// <summary>
     /// Renders a fullscreen quad sampling _YargPrevFrame global texture.
     /// Used by the No Venue camera to show the last rendered frame during FPS skips.
+    /// The shader reads _YargPrevFrame as a global — routing is handled by BackgroundManager
+    /// (points to _trailsTexture for venues, or BackgroundManager RT for image/video).
     /// </summary>
     public sealed class NoVenueBackgroundPass : ScriptableRenderPass
     {
@@ -27,27 +29,11 @@ namespace YARG.Gameplay.Visuals
             if (_trailsTexture == null)
                 return;
 
-            RTHandle prevFrameHandle = RTHandles.Alloc(_trailsTexture);
-            var importInfo = new RenderTargetInfo
-            {
-                width = _trailsTexture.width,
-                height = _trailsTexture.height,
-                volumeDepth = _trailsTexture.volumeDepth,
-                msaaSamples = _trailsTexture.antiAliasing,
-                format = _trailsTexture.graphicsFormat
-            };
-            var importParams = new ImportResourceParams
-            {
-                clearOnFirstUse = false,
-                discardOnLastUse = false
-            };
-            TextureHandle prevFrame = renderGraph.ImportTexture(prevFrameHandle, importInfo, importParams);
             TextureHandle target = resourceData.activeColorTexture;
 
             using (var builder = renderGraph.AddRasterRenderPass<PassData>("NoVenueBackgroundPass", out var passData, _profilingSampler))
             {
                 builder.AllowPassCulling(false);
-                passData.prevFrame = prevFrame;
                 passData.material = _material;
 
                 Vector4 scaleBias = SystemInfo.graphicsUVStartsAtTop
@@ -59,17 +45,16 @@ namespace YARG.Gameplay.Visuals
 
                 builder.SetRenderFunc<PassData>((PassData data, RasterGraphContext context) =>
                 {
-                    var handle = data.prevFrame;
-                    if (!handle.IsValid())
-                        return;
-                    Blitter.BlitTexture(context.cmd, (Texture)handle, data.scaleBias, data.material, 0);
+                    // Shader samples _YargPrevFrame global texture directly.
+                    // Blitter.BlitTexture renders the fullscreen quad; the source texture
+                    // is irrelevant here since NoVenueQuad.shader reads the global.
+                    Blitter.BlitTexture(context.cmd, Texture2D.blackTexture, data.scaleBias, data.material, 0);
                 });
             }
         }
 
         private class PassData
         {
-            public TextureHandle prevFrame;
             public Material material;
             public Vector4 scaleBias;
         }
