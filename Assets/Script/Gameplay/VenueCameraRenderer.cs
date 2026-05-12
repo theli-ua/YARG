@@ -23,6 +23,7 @@ namespace YARG.Gameplay
 
         internal Camera _renderCamera;
         private UniversalRenderPipelineAsset UniversalRenderPipelineAsset;
+        private float _previousRenderScale;
         public Camera NoVenueCamera;
 
         /// <summary>Shim - returns trails texture. Will be removed after BackgroundManager migration.</summary>
@@ -34,12 +35,14 @@ namespace YARG.Gameplay
         private void Awake()
         {
             renderScale = GraphicsManager.Instance.VenueRenderScale;
+            _previousRenderScale = renderScale;
             _renderCamera = GetComponent<Camera>();
             // Disable the camera so we can control when it renders
             _renderCamera.enabled = false;
 
             _renderCamera.allowMSAA = false;
             _renderCamera.targetTexture = null;
+            _renderCamera.allowDynamicResolution = true;
 
             var cameraData = _renderCamera.GetUniversalAdditionalCameraData();
             cameraData.antialiasing = AntialiasingMode.None;
@@ -133,6 +136,14 @@ namespace YARG.Gameplay
                 ScalableBufferManager.ResizeBuffers(renderScale, renderScale);
                 // Force a render this frame to avoid flickering when resizing
                 VenueCameraRendererStatics.ResetRenderState();
+                _previousRenderScale = renderScale;
+            }
+
+            // Update DRS buffers when VenueRenderScale changes (e.g. via settings)
+            if (renderScale != _previousRenderScale)
+            {
+                ScalableBufferManager.ResizeBuffers(renderScale, renderScale);
+                _previousRenderScale = renderScale;
             }
 
             // Update the global volume stack with venue effects so SlowFPS
