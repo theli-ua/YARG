@@ -296,7 +296,7 @@ namespace YARG.Settings.Preview
         private void Start()
         {
             var cmd = new CommandBuffer();
-            cmd.SetRenderTarget(VenueCameraRenderer.VenueTexture);
+            cmd.SetRenderTarget(VenueCameraRenderer.VenueCameraRendererStatics._trailsTexture);
             cmd.ClearRenderTarget(true, true, Color.clear);
             Graphics.ExecuteCommandBuffer(cmd);
             cmd.Dispose();
