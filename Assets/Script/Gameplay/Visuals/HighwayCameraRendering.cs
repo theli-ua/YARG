@@ -399,6 +399,8 @@ namespace YARG.Gameplay.Visuals
 
             if (_highwaysAlphaDepthTexture != null)
             {
+                _highwaysAlphaDepthTextureHandle?.Release();
+                _highwaysAlphaDepthTextureHandle = null;
                 _highwaysAlphaDepthTexture.Release();
                 _highwaysAlphaDepthTexture = null;
             }
@@ -637,11 +639,14 @@ namespace YARG.Gameplay.Visuals
                 TextureHandle target = renderGraph.ImportTexture(HighwayCameraRendering.HighwaysColorTextureHandle);
                 TextureHandle source = resourceData.activeColorTexture;
 
-                renderGraph.AddCopyPass(source, target);
+                renderGraph.AddCopyPass(source, target, passName: "Highway Color Copy");
             }
         }
-        // Disable highway rendering overrides
-        // This is necessary because UI is rendered in context of the same camera
+
+        // Disable highway rendering overrides.
+        // This is necessary because UI is rendered in context of the same camera.
+        // Uses UnsafePass because we only set a global shader integer (CPU-side command),
+        // with no GPU resource access that needs RenderGraph dependency tracking.
         private sealed class CleanupPass : ScriptableRenderPass
         {
             private readonly ProfilingSampler _profilingSampler = new ProfilingSampler("CleanupPass");

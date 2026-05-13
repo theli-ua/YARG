@@ -9,6 +9,7 @@ using UniHumanoid;
 using UnityEngine;
 using UnityEngine.Animations;
 using UnityEngine.Rendering;
+using UnityEngine.Rendering.RenderGraphModule.Util;
 using UnityEngine.Video;
 using YARG.Core.IO;
 using YARG.Core.Song;
@@ -54,6 +55,7 @@ namespace YARG.Gameplay
 
         private float YARGROUND_OFFSET = 50f;
         private RenderTexture _backgroundRT;
+        private RTHandle _backgroundRTHandle;
 
         // These values are relative to the video, not to song time!
         // A negative start time will delay when the video starts, a positive one will set the video position
@@ -194,6 +196,8 @@ namespace YARG.Gameplay
         {
             if (_backgroundRT != null)
             {
+                _backgroundRTHandle?.Release();
+                _backgroundRTHandle = null;
                 _backgroundRT.Release();
             }
 
@@ -202,18 +206,25 @@ namespace YARG.Gameplay
             _backgroundRT.filterMode = FilterMode.Bilinear;
             _backgroundRT.wrapMode = TextureWrapMode.Clamp;
             _backgroundRT.Create();
+            _backgroundRTHandle = RTHandles.Alloc(_backgroundRT);
         }
 
         private void RoutePrevFrameToBackground()
         {
+            // Set global for VenuePP.hlsl trails effect
             var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._trailsTextureId;
             Shader.SetGlobalTexture(trailsTextureId, _backgroundRT);
+            // Set RenderGraph-bound texture for NoVenueBackgroundPass
+            VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = _backgroundRTHandle;
         }
 
         private void RoutePrevFrameToTrails()
         {
+            // Set global for VenuePP.hlsl trails effect
             var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._trailsTextureId;
             Shader.SetGlobalTexture(trailsTextureId, VenueCameraRenderer.VenueCameraRendererStatics._trailsTexture);
+            // Set RenderGraph-bound texture for NoVenueBackgroundPass
+            VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = VenueCameraRenderer.VenueCameraRendererStatics._trailsTextureHandle;
         }
 
         private void SetNoVenueMode(bool enabled)
@@ -333,10 +344,9 @@ namespace YARG.Gameplay
         {
             float elapsed = 0.0f;
 
-
             while (elapsed < time)
             {
-                elapsed += Time.deltaTime;
+                elapsed += Time.unscaledDeltaTime; // Use unscaled time so fade duration is independent of Time.timeScale
 
                 // Calculate the current opacity based on elapsed time
                 float currentOpacity = Mathf.Lerp(start, end, elapsed / time);
@@ -843,10 +853,17 @@ namespace YARG.Gameplay
             return "Default";
         }
 
+        private new void OnDestroy()
+        {
+            Dispose();
+        }
+
         public void Dispose()
         {
             if (_backgroundRT != null)
             {
+                _backgroundRTHandle?.Release();
+                _backgroundRTHandle = null;
                 _backgroundRT.Release();
                 _backgroundRT = null;
             }
@@ -863,11 +880,6 @@ namespace YARG.Gameplay
                 SceneManager.UnloadSceneAsync(_editorVenueScene);
             }
 #endif
-        }
-
-        ~BackgroundManager()
-        {
-            Dispose();
         }
     }
 }

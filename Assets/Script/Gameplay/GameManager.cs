@@ -190,11 +190,11 @@ namespace YARG.Gameplay
             BackgroundManager = GetComponent<BackgroundManager>();
             EngineManager = new EngineManager();
 
-            var venueCameraRenderer = FindAnyObjectByType<VenueCameraRenderer>();
-            if (venueCameraRenderer != null)
-            {
-                NoVenueCamera = venueCameraRenderer.NoVenueCamera;
-            }
+            // Ensure statics are initialized before accessing _noVenueCamera.
+            // Initialize() is guarded against double-init; safe to call here as a fallback
+            // in case VenueCameraRenderer.Awake() hasn't run yet (execution order not guaranteed).
+            VenueCameraRenderer.VenueCameraRendererStatics.Initialize();
+            NoVenueCamera = VenueCameraRenderer.VenueCameraRendererStatics._noVenueCamera;
 
             YargPlayers = PlayerContainer.Players;
 

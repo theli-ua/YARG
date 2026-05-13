@@ -23,7 +23,6 @@ namespace YARG.Gameplay
         internal Camera _renderCamera;
         private UniversalRenderPipelineAsset UniversalRenderPipelineAsset;
         private float _previousRenderScale;
-        public Camera NoVenueCamera;
 
         public static float TargetFPS { get => VenueCameraRendererStatics.TargetFPS; }
         public static float ActualFPS { get => VenueCameraRendererStatics.ActualFPS; }
@@ -69,28 +68,6 @@ namespace YARG.Gameplay
                 VenueCameraRendererStatics._highwayCompositePass = new HighwayCompositePass();
                 VenueCameraRendererStatics._noVenueBackgroundPass = new NoVenueBackgroundPass();
             }
-
-            // Create No Venue camera for FPS skips and image/video backgrounds
-            CreateNoVenueCamera();
-        }
-
-        private void CreateNoVenueCamera()
-        {
-            var go = new GameObject("No Venue Camera");
-            go.layer = gameObject.layer;
-            NoVenueCamera = go.AddComponent<Camera>();
-            NoVenueCamera.enabled = false;
-            NoVenueCamera.orthographic = true;
-            NoVenueCamera.orthographicSize = 5f;
-            NoVenueCamera.nearClipPlane = 0.1f;
-            NoVenueCamera.farClipPlane = 10f;
-            NoVenueCamera.clearFlags = CameraClearFlags.SolidColor;
-            NoVenueCamera.backgroundColor = Color.black;
-            NoVenueCamera.cullingMask = 0; // Don't render any scene objects
-            NoVenueCamera.allowMSAA = false;
-
-            var noVenueData = NoVenueCamera.GetUniversalAdditionalCameraData();
-            noVenueData.renderType = CameraRenderType.Base;
         }
 
         public static void CreateUnscaledBackgroundTexture()
@@ -104,9 +81,9 @@ namespace YARG.Gameplay
             RenderPipelineManager.endCameraRendering += OnEndCameraRender;
 
             // Safety: disable No Venue camera when venue camera is enabled
-            if (NoVenueCamera != null)
+            if (VenueCameraRendererStatics._noVenueCamera != null)
             {
-                NoVenueCamera.enabled = false;
+                VenueCameraRendererStatics._noVenueCamera.enabled = false;
             }
         }
 
@@ -116,14 +93,7 @@ namespace YARG.Gameplay
             RenderPipelineManager.endCameraRendering -= OnEndCameraRender;
         }
 
-        private void OnDestroy()
-        {
-            if (NoVenueCamera != null)
-            {
-                Destroy(NoVenueCamera.gameObject);
-                NoVenueCamera = null;
-            }
-        }
+        // NoVenueCamera is shared static — destroyed by VenueCameraRendererStatics.OnSceneUnloaded()
 
         private void Update()
         {
@@ -188,9 +158,9 @@ namespace YARG.Gameplay
                 }
 
                 // Venue renders — disable No Venue camera, enable venue camera
-                if (NoVenueCamera != null)
+                if (VenueCameraRendererStatics._noVenueCamera != null)
                 {
-                    NoVenueCamera.enabled = false;
+                    VenueCameraRendererStatics._noVenueCamera.enabled = false;
                 }
                 Render();
                 VenueCameraRendererStatics._frameAccumulator -= frameInterval;
@@ -198,9 +168,9 @@ namespace YARG.Gameplay
             else
             {
                 // Venue skips — enable No Venue camera to show last frame
-                if (NoVenueCamera != null)
+                if (VenueCameraRendererStatics._noVenueCamera != null)
                 {
-                    NoVenueCamera.enabled = true;
+                    VenueCameraRendererStatics._noVenueCamera.enabled = true;
                 }
             }
         }
@@ -225,7 +195,7 @@ namespace YARG.Gameplay
         private void OnPreCameraRender(ScriptableRenderContext ctx, Camera cam)
         {
             // Handle No Venue camera
-            if (cam == NoVenueCamera)
+            if (cam == VenueCameraRendererStatics._noVenueCamera)
             {
                 var noVenueRenderer = cam.GetUniversalAdditionalCameraData().scriptableRenderer;
                 if (noVenueRenderer != null)
@@ -318,8 +288,8 @@ namespace YARG.Gameplay
             {
                 UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
 
-                // Copy composited frame (venue + highways) to trails texture
-                // This is used by No Venue camera to show the last rendered frame during FPS skips
+                // Copy venue + PP frame (before highways) to trails texture.
+                // This is used by NoVenueCamera to show the last rendered frame during FPS skips.
                 TextureHandle source = resourceData.activeColorTexture;
                 TextureHandle trailsTexture = renderGraph.ImportTexture(VenueCameraRendererStatics._trailsTextureHandle);
 
@@ -348,6 +318,9 @@ namespace YARG.Gameplay
             public static VenuePostPostProcessingPass _pass;
             public static HighwayCompositePass _highwayCompositePass;
             public static NoVenueBackgroundPass _noVenueBackgroundPass;
+
+            // Shared No Venue camera — one instance across all VenueCameraRenderers
+            internal static Camera _noVenueCamera;
 
             public static float ActualFPS;
             public static float TargetFPS;
@@ -401,6 +374,7 @@ namespace YARG.Gameplay
                 _venueLayerMask = LayerMask.GetMask("Venue");
 
                 ResetRenderState();
+                EnsureNoVenueCamera();
             }
 
             public static void ResetRenderState()
@@ -408,6 +382,27 @@ namespace YARG.Gameplay
                 _frameAccumulator = 0f;
                 _fpsWindowStart = 0f;
                 _fpsWindowFrames = 0;
+            }
+
+            private static void EnsureNoVenueCamera()
+            {
+                if (_noVenueCamera != null)
+                    return;
+
+                var go = new GameObject("No Venue Camera");
+                _noVenueCamera = go.AddComponent<Camera>();
+                _noVenueCamera.enabled = false;
+                _noVenueCamera.orthographic = true;
+                _noVenueCamera.orthographicSize = 5f;
+                _noVenueCamera.nearClipPlane = 0.1f;
+                _noVenueCamera.farClipPlane = 10f;
+                _noVenueCamera.clearFlags = CameraClearFlags.SolidColor;
+                _noVenueCamera.backgroundColor = Color.black;
+                _noVenueCamera.cullingMask = 0; // Don't render any scene objects
+                _noVenueCamera.allowMSAA = false;
+
+                var noVenueData = _noVenueCamera.GetUniversalAdditionalCameraData();
+                noVenueData.renderType = CameraRenderType.Base;
             }
 
             public static void RecreateTextures()
@@ -424,6 +419,9 @@ namespace YARG.Gameplay
                 _trailsTexture = new RenderTexture(descriptor);
                 _trailsTexture.filterMode = FilterMode.Bilinear;
                 _trailsTexture.wrapMode = TextureWrapMode.Clamp;
+                _trailsTexture.useDynamicScale = true;
+                // Note: trails texture is screen-resolution (source is the backbuffer).
+                // RecreateTextures() is called on screen resize via ScreenSizeDetector.
                 _trailsTexture.Create();
                 _trailsTextureHandle = RTHandles.Alloc(_trailsTexture);
                 Shader.SetGlobalTexture(_trailsTextureId, _trailsTexture);
@@ -441,6 +439,22 @@ namespace YARG.Gameplay
                     Destroy(_trailsTexture);
                     _trailsTexture = null;
                 }
+
+                if (_noVenueCamera != null)
+                {
+                    Destroy(_noVenueCamera.gameObject);
+                    _noVenueCamera = null;
+                }
+
+                // Clean up materials held by render passes to prevent leaks across scene loads.
+                // _pass (VenuePostPostProcessingPass) uses AddCopyPass and has no material.
+                CoreUtils.Destroy(_highwayCompositePass?.material);
+                _highwayCompositePass = null;
+                CoreUtils.Destroy(_noVenueBackgroundPass?.material);
+                _noVenueBackgroundPass = null;
+                _pass = null;
+
+                _isInitialized = false;
             }
 
         }

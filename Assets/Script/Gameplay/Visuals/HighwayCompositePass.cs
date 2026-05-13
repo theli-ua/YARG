@@ -12,7 +12,9 @@ namespace YARG.Gameplay.Visuals
     public sealed class HighwayCompositePass : ScriptableRenderPass
     {
         private readonly ProfilingSampler _profilingSampler = new ProfilingSampler("HighwayCompositePass");
-        private readonly Material _material;
+        private Material _material;
+
+        internal Material material => _material;
 
         public HighwayCompositePass()
         {
