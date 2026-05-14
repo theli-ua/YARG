@@ -285,50 +285,10 @@ namespace YARG.Gameplay
 
                 // Copy venue + PP frame (before highways) to trails texture.
                 // This is used by NoVenueCamera to show the last rendered frame during FPS skips.
-                // Use shader blit with Y-flip so _trailsTexture stores in Y-up layout,
-                // matching highways RT and _backgroundRT. Downstream consumers
-                // (NoVenueBackgroundPass, HighwayCompositePass) then apply the same
-                // Y-flip when blitting back to the backbuffer.
                 TextureHandle source = resourceData.activeColorTexture;
                 TextureHandle trailsTexture = renderGraph.ImportTexture(VenueCameraRendererStatics._trailsTextureHandle);
 
-                using (var builder = renderGraph.AddRasterRenderPass<TrailsCopyPassData>("Trails Frame Copy", out var passData, new ProfilingSampler("Trails Frame Copy")))
-                {
-                    builder.AllowPassCulling(false);
-                    passData.source = source;
-                    passData.trailsTexture = trailsTexture;
-                    passData.material = VenueCameraRendererStatics._trailsCopyMaterial;
-
-                    builder.SetRenderAttachment(trailsTexture, 0, AccessFlags.Write);
-
-                    builder.SetRenderFunc<TrailsCopyPassData>((TrailsCopyPassData data, RasterGraphContext context) =>
-                    {
-                        // When dynamic resolution is active, the source texture uses rtHandleScale
-                        // to indicate the valid sub-region (e.g. 0.7 for 70% scaling).
-                        // We need to incorporate this into the scaleBias so the blit only samples
-                        // the valid viewport area of the source, just like URP's FinalBlitPass does.
-                        // This matches how URP treats dynamic-scale textures internally.
-                        RTHandle srcRTHandle = data.source;
-                        Vector2 scale = srcRTHandle.useScaling
-                            ? new Vector2(srcRTHandle.rtHandleProperties.rtHandleScale.x,
-                                          srcRTHandle.rtHandleProperties.rtHandleScale.y)
-                            : Vector2.one;
-
-                        bool yflip = SystemInfo.graphicsUVStartsAtTop;
-                        Vector4 scaleBias = yflip
-                            ? new Vector4(1.0f, -1.0f, 0, 1.0f)
-                            : new Vector4(1.0f, 1.0f, 0, 0);
-
-                        Blitter.BlitTexture(context.cmd, data.source, scaleBias, data.material, 0);
-                    });
-                }
-            }
-
-            private class TrailsCopyPassData
-            {
-                public TextureHandle source;
-                public TextureHandle trailsTexture;
-                public Material material;
+                renderGraph.AddCopyPass(source, trailsTexture, passName: "Trails Frame Copy");
             }
         }
 

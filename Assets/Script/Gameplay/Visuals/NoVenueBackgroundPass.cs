@@ -46,8 +46,8 @@ namespace YARG.Gameplay.Visuals
                 passData.material = _material;
 
                 Vector4 scaleBias = SystemInfo.graphicsUVStartsAtTop
-                    ? new Vector4(1, -1, 0, 1)
-                    : new Vector4(1, 1, 0, 0);
+                    ? new Vector4(1, 1, 0, 0)
+                    : new Vector4(1, -1, 0, 1);
                 passData.scaleBias = scaleBias;
 
                 builder.SetRenderAttachment(target, 0, AccessFlags.Write);
