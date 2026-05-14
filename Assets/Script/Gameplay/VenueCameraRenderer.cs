@@ -406,6 +406,7 @@ namespace YARG.Gameplay
 
             public static void RecreateTextures()
             {
+                var UniversalRenderPipelineAsset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
                 if (_trailsTexture != null)
                 {
                     _trailsTextureHandle?.Release();
@@ -415,6 +416,8 @@ namespace YARG.Gameplay
                 }
 
                 var descriptor = new RenderTextureDescriptor(Screen.width, Screen.height, RenderTextureFormat.DefaultHDR, 0, 0);
+                descriptor.msaaSamples = UniversalRenderPipelineAsset.msaaSampleCount;
+
                 _trailsTexture = new RenderTexture(descriptor);
                 _trailsTexture.filterMode = FilterMode.Bilinear;
                 _trailsTexture.wrapMode = TextureWrapMode.Clamp;
