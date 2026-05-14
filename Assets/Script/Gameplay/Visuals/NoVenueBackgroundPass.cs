@@ -25,7 +25,7 @@ namespace YARG.Gameplay.Visuals
 
         public NoVenueBackgroundPass()
         {
-            renderPassEvent = RenderPassEvent.BeforeRendering;
+            renderPassEvent = RenderPassEvent.BeforeRenderingOpaques;
             _material = CoreUtils.CreateEngineMaterial("Hidden/YARG/NoVenueQuad");
         }
 

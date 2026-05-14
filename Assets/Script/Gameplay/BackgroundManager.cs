@@ -291,7 +291,14 @@ namespace YARG.Gameplay
                 SetUpVideoTexture(songBackground);
             }
 
-            await LoadCustomCharacter(bgInstance);
+            try
+            {
+                await LoadCustomCharacter(bgInstance);
+            }
+            catch (System.Exception e)
+            {
+                YargLogger.LogError($"[BackgroundManager] LoadCustomCharacter failed: {e.Message}");
+            }
 
             // Initialize CharacterManager, if it exists
             var characterManager = bgInstance.GetComponentInChildren<CharacterManager>();
@@ -301,6 +308,8 @@ namespace YARG.Gameplay
             }
 
             // Route _YargPrevFrame to trails texture for venue mode
+            // This must always be called, even if LoadCustomCharacter fails,
+            // otherwise NoVenueBackgroundPass will have no texture to display.
             RoutePrevFrameToTrails();
             SetNoVenueMode(false);
             ShowVenue();
