@@ -357,7 +357,7 @@ namespace YARG.Settings
                  {
                      YARG.VenueAntiAliasingMethod.None,
                      YARG.VenueAntiAliasingMethod.FXAA,
-                     YARG.VenueAntiAliasingMethod.MSAA,
+                     YARG.VenueAntiAliasingMethod.SMAA,
                      YARG.VenueAntiAliasingMethod.TAA,
                  };
 

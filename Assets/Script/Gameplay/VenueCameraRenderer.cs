@@ -35,7 +35,7 @@ namespace YARG.Gameplay
             // Disable the camera so we can control when it renders
             _renderCamera.enabled = false;
 
-            _renderCamera.allowMSAA = false;
+            _renderCamera.allowMSAA = true;
             _renderCamera.targetTexture = null;
             _renderCamera.allowDynamicResolution = true;
             ScalableBufferManager.ResizeBuffers(renderScale, renderScale);
@@ -49,8 +49,7 @@ namespace YARG.Gameplay
                 case VenueAntiAliasingMethod.FXAA:
                     cameraData.antialiasing = AntialiasingMode.FastApproximateAntialiasing;
                     break;
-                case VenueAntiAliasingMethod.MSAA:
-                    _renderCamera.allowMSAA = true;
+                case VenueAntiAliasingMethod.SMAA:
                     cameraData.antialiasing = AntialiasingMode.SubpixelMorphologicalAntiAliasing;
                     break;
                 case VenueAntiAliasingMethod.TAA:

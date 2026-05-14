@@ -1428,7 +1428,7 @@
                 "Dropdown": {
                     "None": "なし",
                     "FXAA": "FXAA",
-                    "MSAA": "MSAA",
+                    "SMAA": "SMAA",
                     "TAA": "TAA"
                 }
             },

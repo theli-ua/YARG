@@ -16,7 +16,7 @@ namespace YARG
     {
         None,
         FXAA,
-        MSAA,
+        SMAA,
         TAA,
     }
 

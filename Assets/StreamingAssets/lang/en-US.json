@@ -1459,11 +1459,11 @@
             },
             "VenueAntiAliasing": {
                 "Name": "Venue Anti Aliasing",
-                "Description": "The anti-aliasing method to use for venue backgrounds.",
+                "Description": "The anti-aliasing method to use for venue backgrounds.\nNote that if hw supports, MSAA is already enabled unless Low graphics mode is set.\nTAA may not be compatible with MSAA",
                 "Dropdown": {
                     "None": "None",
                     "FXAA": "FXAA",
-                    "MSAA": "MSAA",
+                    "SMAA": "SMAA",
                     "TAA": "TAA"
                 }
             },
