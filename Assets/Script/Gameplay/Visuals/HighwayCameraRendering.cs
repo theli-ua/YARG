@@ -515,7 +515,7 @@ namespace YARG.Gameplay.Visuals
             public FadePass(HighwayCameraRendering highCamRend)
             {
                 _highwayCameraRendering = highCamRend;
-                renderPassEvent = RenderPassEvent.AfterRendering;
+                renderPassEvent = RenderPassEvent.BeforeRenderingPostProcessing;
                 _material = new Material(Shader.Find("HighwaysAlphaMask"));
             }
 
