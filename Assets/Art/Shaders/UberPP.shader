@@ -53,7 +53,6 @@ Shader "Artificial Artists/Universal Render Pipeline/AA_UberPost"
         TEXTURE2D(_UserLut);
         TEXTURE2D(_BlueNoise_Texture);
         TEXTURE2D_X(_OverlayUITexture);
-        TEXTURE2D(_YargHighwaysAlphaMask);
 
         float4 _BloomTexture_TexelSize;
         float4 _Lut_Params;
@@ -317,13 +316,6 @@ Shader "Artificial Artists/Universal Render Pipeline/AA_UberPost"
                 return debugColor;
             }
             #endif
-
-            if (_YargHighwaysN > 0)
-            {
-                half alpha_mask = SAMPLE_TEXTURE2D(_YargHighwaysAlphaMask, sampler_LinearClamp, uvDistorted).r;
-
-                return half4(color, min(inputColor.a, alpha_mask));
-            }
 
             if (_YargIsVenue > 0)
             {

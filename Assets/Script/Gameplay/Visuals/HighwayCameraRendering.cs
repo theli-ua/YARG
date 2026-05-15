@@ -44,10 +44,7 @@ namespace YARG.Gameplay.Visuals
 
         private RenderTexture _highwaysColorTexture;
         private RenderTexture _highwaysDepthlessColorTexture;
-        private RenderTexture _highwaysAlphaTexture;
-        private RenderTexture _highwaysAlphaDepthTexture;
-        private RTHandle _highwaysAlphaTextureHandle;
-        private RTHandle _highwaysAlphaDepthTextureHandle;
+
         private ScriptableRenderPass _fadeCalcPass;
         private ScriptableRenderPass _cleanupPass;
         private ScriptableRenderPass _copyPass;
@@ -73,7 +70,7 @@ namespace YARG.Gameplay.Visuals
         public static readonly int YargHighwayCamProjMatricesID = Shader.PropertyToID("_YargCamProjMatrices");
         public static readonly int YargCurveFactorsID = Shader.PropertyToID("_YargCurveFactors");
         public static readonly int YargFadeParamsID = Shader.PropertyToID("_YargFadeParams");
-        public static readonly int YargHighwaysAlphaTextureID = Shader.PropertyToID("_YargHighwaysAlphaMask");
+
         public static readonly int YargHighwaysColorTextureID = Shader.PropertyToID("_YargHighwaysColorTexture");
 
         public static RTHandle HighwaysColorTextureHandle => _highwaysDepthlessColorTextureHandle;
@@ -127,7 +124,7 @@ namespace YARG.Gameplay.Visuals
             // Expose as global shader texture for HighwayCompositePass
             Shader.SetGlobalTexture(YargHighwaysColorTextureID, _highwaysColorTexture);
 
-            ResetHighwayAlphaTexture();
+
         }
 
         public Vector2 WorldToViewport(Vector3 positionWs, int index)
@@ -339,39 +336,7 @@ namespace YARG.Gameplay.Visuals
             UpdateCameraProjectionMatrices();
         }
 
-        private void ResetHighwayAlphaTexture()
-        {
-            if (_highwaysAlphaTextureHandle != null)
-            {
-                _highwaysAlphaTextureHandle.Release();
-                _highwaysAlphaTextureHandle = null;
-            }
 
-            if (_highwaysAlphaTexture != null)
-            {
-                _highwaysAlphaTexture.Release();
-            }
-
-            if (_highwaysAlphaDepthTexture != null)
-            {
-                _highwaysAlphaDepthTexture.Release();
-            }
-
-            // Create color texture (alpha mask) - screen-res, no MSAA needed for mask
-            var colorDescriptor = new RenderTextureDescriptor(
-                Screen.width, Screen.height,
-                RenderTextureFormat.RFloat);
-            _highwaysAlphaTexture = new RenderTexture(colorDescriptor);
-            _highwaysAlphaTextureHandle = RTHandles.Alloc(_highwaysAlphaTexture);
-            Shader.SetGlobalTexture(YargHighwaysAlphaTextureID, _highwaysAlphaTexture);
-
-            // Create matching depth texture - no MSAA needed
-            var depthDescriptor = new RenderTextureDescriptor(
-                Screen.width, Screen.height,
-                RenderTextureFormat.Depth, 16);
-            _highwaysAlphaDepthTexture = new RenderTexture(depthDescriptor);
-            _highwaysAlphaDepthTextureHandle = RTHandles.Alloc(_highwaysAlphaDepthTexture);
-        }
 
         private void Cleanup()
         {
@@ -389,21 +354,7 @@ namespace YARG.Gameplay.Visuals
                 _highwaysDepthlessColorTexture = null;
             }
 
-            if (_highwaysAlphaTexture != null)
-            {
-                _highwaysAlphaTextureHandle?.Release();
-                _highwaysAlphaTextureHandle = null;
-                _highwaysAlphaTexture.Release();
-                _highwaysAlphaTexture = null;
-            }
 
-            if (_highwaysAlphaDepthTexture != null)
-            {
-                _highwaysAlphaDepthTextureHandle?.Release();
-                _highwaysAlphaDepthTextureHandle = null;
-                _highwaysAlphaDepthTexture.Release();
-                _highwaysAlphaDepthTexture = null;
-            }
         }
 
         private void OnDisable()
@@ -564,7 +515,7 @@ namespace YARG.Gameplay.Visuals
             public FadePass(HighwayCameraRendering highCamRend)
             {
                 _highwayCameraRendering = highCamRend;
-                renderPassEvent = RenderPassEvent.BeforeRendering;
+                renderPassEvent = RenderPassEvent.AfterRendering;
                 _material = new Material(Shader.Find("HighwaysAlphaMask"));
             }
 
@@ -572,47 +523,31 @@ namespace YARG.Gameplay.Visuals
             {
                 using (var builder = renderGraph.AddRasterRenderPass<PassData>("CalcFadeAlphaMask", out var passData, _profilingSampler))
                 {
-                    var resourceData = frameData.Get<UniversalResourceData>();
                     var cameraData = frameData.Get<UniversalCameraData>();
                     var renderingData = frameData.Get<UniversalRenderingData>();
+                    var resourceData = frameData.Get<UniversalResourceData>();
 
                     passData.material = _material;
 
-                    var alphaTextureHandle = renderGraph.ImportTexture(_highwayCameraRendering._highwaysAlphaTextureHandle);
-                    var depthTextureHandle = renderGraph.ImportTexture(_highwayCameraRendering._highwaysAlphaDepthTextureHandle);
+                    // Write alpha mask into the highway color texture's alpha channel
 
-                    builder.SetRenderAttachment(alphaTextureHandle, 0, AccessFlags.WriteAll);
-                    // Use our own depth texture with matching MSAA sample count
-                    builder.SetRenderAttachmentDepth(depthTextureHandle, AccessFlags.WriteAll);
-
+                    builder.SetRenderAttachment(resourceData.activeColorTexture, 0, AccessFlags.ReadWrite);
                     builder.AllowPassCulling(false);
 
-                    // Create renderer list for transparents
-                    var transparentDesc = new RendererListDesc(_shaderTagIds, renderingData.cullResults, cameraData.camera)
+                    // Single renderer list for all queues
+                    var desc = new RendererListDesc(_shaderTagIds, renderingData.cullResults, cameraData.camera)
                     {
-                        renderQueueRange = RenderQueueRange.transparent,
+                        renderQueueRange = RenderQueueRange.all,
                         overrideMaterial = passData.material,
                         layerMask = LayerMask,
+                        sortingCriteria = SortingCriteria.CommonTransparent,
                     };
-                    passData.transparentRendererList = renderGraph.CreateRendererList(transparentDesc);
-                    builder.UseRendererList(passData.transparentRendererList);
-
-                    // Create renderer list for opaques
-                    var opaqueDesc = new RendererListDesc(_shaderTagIds, renderingData.cullResults, cameraData.camera)
-                    {
-                        renderQueueRange = RenderQueueRange.opaque,
-                        overrideMaterial = passData.material,
-                        layerMask = LayerMask,
-                    };
-                    passData.opaqueRendererList = renderGraph.CreateRendererList(opaqueDesc);
-                    builder.UseRendererList(passData.opaqueRendererList);
+                    passData.rendererList = renderGraph.CreateRendererList(desc);
+                    builder.UseRendererList(passData.rendererList);
 
                     builder.SetRenderFunc<PassData>((PassData data, RasterGraphContext context) =>
                     {
-                        // Clear both color and depth
-                        context.cmd.ClearRenderTarget(true, true, Color.clear);
-                        context.cmd.DrawRendererList(data.transparentRendererList);
-                        context.cmd.DrawRendererList(data.opaqueRendererList);
+                        context.cmd.DrawRendererList(data.rendererList);
                     });
                 }
             }
@@ -620,9 +555,9 @@ namespace YARG.Gameplay.Visuals
             private class PassData
             {
                 public Material material;
-                public RendererListHandle transparentRendererList;
-                public RendererListHandle opaqueRendererList;
+                public RendererListHandle rendererList;
             }
+
         }
 
         public sealed class HighwayCopyPass : ScriptableRenderPass
