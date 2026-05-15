@@ -14,9 +14,6 @@ namespace YARG.Gameplay.Visuals
     public sealed class NoVenueBackgroundPass : ScriptableRenderPass
     {
         private readonly ProfilingSampler _profilingSampler = new ProfilingSampler("NoVenueBackgroundPass");
-        private Material _material;
-
-        internal Material material => _material;
 
         /// <summary>
         /// The texture to display as the background. Set by BackgroundManager.
@@ -26,7 +23,6 @@ namespace YARG.Gameplay.Visuals
         public NoVenueBackgroundPass()
         {
             renderPassEvent = RenderPassEvent.BeforeRenderingOpaques;
-            _material = CoreUtils.CreateEngineMaterial("Hidden/YARG/NoVenueQuad");
         }
 
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
@@ -43,7 +39,6 @@ namespace YARG.Gameplay.Visuals
             {
                 builder.AllowPassCulling(false);
                 passData.source = source;
-                passData.material = _material;
 
                 Vector4 scaleBias = SystemInfo.graphicsUVStartsAtTop
                     ? new Vector4(1, 1, 0, 0)
@@ -54,7 +49,7 @@ namespace YARG.Gameplay.Visuals
 
                 builder.SetRenderFunc<PassData>((PassData data, RasterGraphContext context) =>
                 {
-                    Blitter.BlitTexture(context.cmd, data.source, data.scaleBias, data.material, 0);
+                    Blitter.BlitTexture(context.cmd, data.source, data.scaleBias, 0, false);
                 });
             }
         }
@@ -62,7 +57,6 @@ namespace YARG.Gameplay.Visuals
         private class PassData
         {
             public TextureHandle source;
-            public Material material;
             public Vector4 scaleBias;
         }
     }

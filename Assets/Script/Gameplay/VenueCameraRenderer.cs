@@ -422,7 +422,6 @@ namespace YARG.Gameplay
                 _frameCopyMaterial = null;
                 CoreUtils.Destroy(_highwayCompositePass?.material);
                 _highwayCompositePass = null;
-                CoreUtils.Destroy(_noVenueBackgroundPass?.material);
                 _noVenueBackgroundPass = null;
                 _pass = null;
 
