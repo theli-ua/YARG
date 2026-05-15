@@ -11,7 +11,7 @@ Shader "HighwaysAlphaMask"
             ZWrite Off
             Cull Off
             ColorMask A
-            Blend Zero One
+            Blend One One
             BlendOp Min
 
             HLSLPROGRAM
