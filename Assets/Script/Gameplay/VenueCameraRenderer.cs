@@ -253,9 +253,9 @@ namespace YARG.Gameplay
         }
 
 
-        public sealed class VenuePostPostProcessingPass : ScriptableRenderPass
+        public sealed class VenueFrameCopyPass : ScriptableRenderPass
         {
-            public VenuePostPostProcessingPass()
+            public VenueFrameCopyPass()
             {
                 renderPassEvent = RenderPassEvent.AfterRenderingPostProcessing;
             }
@@ -264,23 +264,24 @@ namespace YARG.Gameplay
             {
                 UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
 
-                // Copy venue + PP frame (before highways) to trails texture.
+                // Copy venue + PP frame (before highways).
                 // This is used by NoVenueCamera to show the last rendered frame during FPS skips.
+                // And for trails PP effect
                 TextureHandle source = resourceData.activeColorTexture;
-                TextureHandle trailsTexture = renderGraph.ImportTexture(VenueCameraRendererStatics._trailsTextureHandle);
+                TextureHandle frameCopyTexture = renderGraph.ImportTexture(VenueCameraRendererStatics._previousFrameTextureHandle);
 
-                renderGraph.AddCopyPass(source, trailsTexture, passName: "Trails Frame Copy");
+                renderGraph.AddCopyPass(source, frameCopyTexture, passName: "Venue Frame Copy");
             }
         }
 
         public static class VenueCameraRendererStatics
         {
-            public static RenderTexture _trailsTexture;
-            public static RTHandle _trailsTextureHandle;
+            public static RenderTexture _previousFrameTexture;
+            public static RTHandle _previousFrameTextureHandle;
 
             public static readonly int _IsVenueId = Shader.PropertyToID("_YargIsVenue");
             public static readonly int _trailsLengthId = Shader.PropertyToID("_YargTrailLength");
-            public static readonly int _trailsTextureId = Shader.PropertyToID("_YargPrevFrame");
+            public static readonly int _previousFrameTextureId = Shader.PropertyToID("_YargPrevFrame");
             public static readonly int _posterizeStepsId = Shader.PropertyToID("_YargPosterizeSteps");
             public static readonly int _scanlineIntensityId = Shader.PropertyToID("_YargScanlineIntensity");
             public static readonly int _scanlineSizeId = Shader.PropertyToID("_YargScanlineSize");
@@ -291,10 +292,10 @@ namespace YARG.Gameplay
 
             public static readonly string[] _mirrorKeywords = { "YARG_MIRROR_LEFT", "YARG_MIRROR_RIGHT", "YARG_MIRROR_CLOCK_CCW", "YARG_MIRROR_NONE" };
 
-            public static VenuePostPostProcessingPass _pass;
+            public static VenueFrameCopyPass _pass;
             public static HighwayCompositePass _highwayCompositePass;
             public static NoVenueBackgroundPass _noVenueBackgroundPass;
-            public static Material _trailsCopyMaterial;
+            public static Material _frameCopyMaterial;
 
             // Shared No Venue camera — one instance across all VenueCameraRenderers
             internal static Camera _noVenueCamera;
@@ -341,9 +342,9 @@ namespace YARG.Gameplay
                 _isInitialized = true;
 
                 SceneManager.sceneUnloaded += OnSceneUnloaded;
-                _trailsCopyMaterial = CoreUtils.CreateEngineMaterial("Hidden/YARG/NoVenueQuad");
+                _frameCopyMaterial = CoreUtils.CreateEngineMaterial("Hidden/YARG/NoVenueQuad");
                 RecreateTextures();
-                _pass = new VenuePostPostProcessingPass();
+                _pass = new VenueFrameCopyPass();
                 _highwayCompositePass = new HighwayCompositePass();
                 _noVenueBackgroundPass = new NoVenueBackgroundPass();
 
@@ -377,39 +378,37 @@ namespace YARG.Gameplay
             public static void RecreateTextures()
             {
                 var UniversalRenderPipelineAsset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
-                if (_trailsTexture != null)
+                if (_previousFrameTexture != null)
                 {
-                    _trailsTextureHandle?.Release();
-                    _trailsTextureHandle = null;
-                    _trailsTexture.Release();
-                    _trailsTexture.DiscardContents();
+                    _previousFrameTextureHandle?.Release();
+                    _previousFrameTextureHandle = null;
+                    _previousFrameTexture.Release();
+                    _previousFrameTexture.DiscardContents();
                 }
 
                 var descriptor = new RenderTextureDescriptor(Screen.width, Screen.height, RenderTextureFormat.DefaultHDR, 0, 0);
                 descriptor.msaaSamples = UniversalRenderPipelineAsset.msaaSampleCount;
 
-                _trailsTexture = new RenderTexture(descriptor);
-                _trailsTexture.filterMode = FilterMode.Bilinear;
-                _trailsTexture.wrapMode = TextureWrapMode.Clamp;
-                _trailsTexture.useDynamicScale = true;
-                // Note: trails texture is screen-resolution (source is the backbuffer).
-                // RecreateTextures() is called on screen resize via ScreenSizeDetector.
-                _trailsTexture.Create();
-                _trailsTextureHandle = RTHandles.Alloc(_trailsTexture);
-                Shader.SetGlobalTexture(_trailsTextureId, _trailsTexture);
+                _previousFrameTexture = new RenderTexture(descriptor);
+                _previousFrameTexture.filterMode = FilterMode.Bilinear;
+                _previousFrameTexture.wrapMode = TextureWrapMode.Clamp;
+                _previousFrameTexture.useDynamicScale = true;
+                _previousFrameTexture.Create();
+                _previousFrameTextureHandle = RTHandles.Alloc(_previousFrameTexture);
+                Shader.SetGlobalTexture(_previousFrameTextureId, _previousFrameTexture);
 
-                Graphics.Blit(Texture2D.blackTexture, _trailsTexture);
+                Graphics.Blit(Texture2D.blackTexture, _previousFrameTexture);
             }
 
             private static void OnSceneUnloaded(Scene scene)
             {
-                if (_trailsTexture != null)
+                if (_previousFrameTexture != null)
                 {
-                    _trailsTextureHandle?.Release();
-                    _trailsTextureHandle = null;
-                    _trailsTexture.Release();
-                    Destroy(_trailsTexture);
-                    _trailsTexture = null;
+                    _previousFrameTextureHandle?.Release();
+                    _previousFrameTextureHandle = null;
+                    _previousFrameTexture.Release();
+                    Destroy(_previousFrameTexture);
+                    _previousFrameTexture = null;
                 }
 
                 if (_noVenueCamera != null)
@@ -419,8 +418,8 @@ namespace YARG.Gameplay
                 }
 
                 // Clean up materials held by render passes to prevent leaks across scene loads.
-                CoreUtils.Destroy(_trailsCopyMaterial);
-                _trailsCopyMaterial = null;
+                CoreUtils.Destroy(_frameCopyMaterial);
+                _frameCopyMaterial = null;
                 CoreUtils.Destroy(_highwayCompositePass?.material);
                 _highwayCompositePass = null;
                 CoreUtils.Destroy(_noVenueBackgroundPass?.material);

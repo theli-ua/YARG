@@ -209,7 +209,7 @@ namespace YARG.Gameplay
         private void RoutePrevFrameToBackground()
         {
             // Set global for VenuePP.hlsl trails effect
-            var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._trailsTextureId;
+            var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTextureId;
             Shader.SetGlobalTexture(trailsTextureId, _backgroundRT);
             // Set RenderGraph-bound texture for NoVenueBackgroundPass
             VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = _backgroundRTHandle;
@@ -218,10 +218,10 @@ namespace YARG.Gameplay
         private void RoutePrevFrameToTrails()
         {
             // Set global for VenuePP.hlsl trails effect
-            var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._trailsTextureId;
-            Shader.SetGlobalTexture(trailsTextureId, VenueCameraRenderer.VenueCameraRendererStatics._trailsTexture);
+            var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTextureId;
+            Shader.SetGlobalTexture(trailsTextureId, VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTexture);
             // Set RenderGraph-bound texture for NoVenueBackgroundPass
-            VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = VenueCameraRenderer.VenueCameraRendererStatics._trailsTextureHandle;
+            VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTextureHandle;
         }
 
         private async UniTask LoadYarground(BackgroundResult result)
