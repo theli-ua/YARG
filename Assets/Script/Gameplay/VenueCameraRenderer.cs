@@ -29,9 +29,9 @@ namespace YARG.Gameplay
 
         private void Awake()
         {
+            _renderCamera = GetComponent<Camera>();
             renderScale = GraphicsManager.Instance.VenueRenderScale;
             _previousRenderScale = renderScale;
-            _renderCamera = GetComponent<Camera>();
             // Disable the camera so we can control when it renders
             _renderCamera.enabled = false;
 
@@ -72,12 +72,6 @@ namespace YARG.Gameplay
         {
             RenderPipelineManager.beginCameraRendering += OnPreCameraRender;
             RenderPipelineManager.endCameraRendering += OnEndCameraRender;
-
-            // Safety: disable No Venue camera when venue camera is enabled
-            if (VenueCameraRendererStatics._noVenueCamera != null)
-            {
-                VenueCameraRendererStatics._noVenueCamera.enabled = false;
-            }
         }
 
         private void OnDisable()
@@ -188,18 +182,6 @@ namespace YARG.Gameplay
 
         private void OnPreCameraRender(ScriptableRenderContext ctx, Camera cam)
         {
-            // Handle No Venue camera
-            if (cam == VenueCameraRendererStatics._noVenueCamera)
-            {
-                var noVenueRenderer = cam.GetUniversalAdditionalCameraData().scriptableRenderer;
-                if (noVenueRenderer != null)
-                {
-                    noVenueRenderer.EnqueuePass(VenueCameraRendererStatics._noVenueBackgroundPass);
-                    noVenueRenderer.EnqueuePass(VenueCameraRendererStatics._highwayCompositePass);
-                }
-                return;
-            }
-
             // Handle venue camera
             if (cam != _renderCamera)
             {
@@ -389,18 +371,7 @@ namespace YARG.Gameplay
 
                 var go = new GameObject("No Venue Camera");
                 _noVenueCamera = go.AddComponent<Camera>();
-                _noVenueCamera.enabled = false;
-                _noVenueCamera.orthographic = true;
-                _noVenueCamera.orthographicSize = 5f;
-                _noVenueCamera.nearClipPlane = 0.1f;
-                _noVenueCamera.farClipPlane = 10f;
-                _noVenueCamera.clearFlags = CameraClearFlags.SolidColor;
-                _noVenueCamera.backgroundColor = Color.black;
-                _noVenueCamera.cullingMask = 0; // Don't render any scene objects
-                _noVenueCamera.allowMSAA = false;
-
-                var noVenueData = _noVenueCamera.GetUniversalAdditionalCameraData();
-                noVenueData.renderType = CameraRenderType.Base;
+                go.AddComponent<NoVenueCameraRenderer>();
             }
 
             public static void RecreateTextures()

@@ -154,7 +154,6 @@ namespace YARG.Gameplay
 
                 _type = BackgroundType.Yarground;
                 RoutePrevFrameToTrails();
-                SetNoVenueMode(false);
                 ShowVenue();
 
                 return;
@@ -177,7 +176,6 @@ namespace YARG.Gameplay
                 case BackgroundType.Video:
                     CreateBackgroundRT();
                     LoadVideoBackground(result);
-                    SetNoVenueMode(true);
                     ShowVenue();
                     break;
                 case BackgroundType.Image:
@@ -186,7 +184,6 @@ namespace YARG.Gameplay
                     Graphics.Blit(imageTex, _backgroundRT, new Vector2(1, -1), new Vector2(0, 1));
                     Destroy(imageTex);
                     RoutePrevFrameToBackground();
-                    SetNoVenueMode(true);
                     ShowVenue();
                     break;
             }
@@ -225,27 +222,6 @@ namespace YARG.Gameplay
             Shader.SetGlobalTexture(trailsTextureId, VenueCameraRenderer.VenueCameraRendererStatics._trailsTexture);
             // Set RenderGraph-bound texture for NoVenueBackgroundPass
             VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = VenueCameraRenderer.VenueCameraRendererStatics._trailsTextureHandle;
-        }
-
-        private void SetNoVenueMode(bool enabled)
-        {
-            var noVenueCam = GameManager.NoVenueCamera;
-            var venueRenderer = FindAnyObjectByType<VenueCameraRenderer>();
-
-            if (enabled)
-            {
-                // No Venue mode: show image/video background
-                if (noVenueCam != null)
-                    noVenueCam.enabled = true;
-                if (venueRenderer != null)
-                    venueRenderer._renderCamera.enabled = false;
-            }
-            else
-            {
-                // Venue mode: show 3D venue
-                if (noVenueCam != null)
-                    noVenueCam.enabled = false;
-            }
         }
 
         private async UniTask LoadYarground(BackgroundResult result)
@@ -311,7 +287,6 @@ namespace YARG.Gameplay
             // This must always be called, even if LoadCustomCharacter fails,
             // otherwise NoVenueBackgroundPass will have no texture to display.
             RoutePrevFrameToTrails();
-            SetNoVenueMode(false);
             ShowVenue();
         }
 
