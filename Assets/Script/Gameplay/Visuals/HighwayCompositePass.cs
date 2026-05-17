@@ -7,7 +7,7 @@ namespace YARG.Gameplay.Visuals
 {
     /// <summary>
     /// Blits the HighwaysRT onto the backbuffer with SrcAlpha OneMinusSrcAlpha blending.
-    /// Executes at AfterRendering event — after background is in backbuffer, before UberPP.
+    /// Executes at AfterRendering event — after background and post-processing are in backbuffer.
     /// </summary>
     public sealed class HighwayCompositePass : ScriptableRenderPass
     {

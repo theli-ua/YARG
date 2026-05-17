@@ -208,7 +208,7 @@ namespace YARG.Gameplay
 
         private void RoutePrevFrameToBackground()
         {
-            // Set global for VenuePP.hlsl trails effect
+            // Set global for YargVenuePP.shader trails effect
             var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTextureId;
             Shader.SetGlobalTexture(trailsTextureId, _backgroundRT);
             // Set RenderGraph-bound texture for NoVenueBackgroundPass
@@ -217,7 +217,7 @@ namespace YARG.Gameplay
 
         private void RoutePrevFrameToTrails()
         {
-            // Set global for VenuePP.hlsl trails effect
+            // Set global for YargVenuePP.shader trails effect
             var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTextureId;
             Shader.SetGlobalTexture(trailsTextureId, VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTexture);
             // Set RenderGraph-bound texture for NoVenueBackgroundPass

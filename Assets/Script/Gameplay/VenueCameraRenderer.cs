@@ -175,7 +175,6 @@ namespace YARG.Gameplay
 
             Shader.SetGlobalInteger(VenueCameraRendererStatics._posterizeStepsId, 0);
             Shader.SetGlobalFloat(VenueCameraRendererStatics._startTimeId, 0);
-            Shader.SetGlobalFloat(VenueCameraRendererStatics._IsVenueId, 0);
             Shader.SetGlobalInt(VenueCameraRendererStatics._scanlineSizeId, 0);
             Shader.SetGlobalFloat(VenueCameraRendererStatics._trailsLengthId, 0);
         }
@@ -187,8 +186,6 @@ namespace YARG.Gameplay
             {
                 return;
             }
-
-            Shader.SetGlobalFloat(VenueCameraRendererStatics._IsVenueId, 1);
 
             // URP replaces VolumeManager.instance.stack with either the global stack
             // or the camera's local volumeStack during rendering setup, depending on
@@ -241,7 +238,8 @@ namespace YARG.Gameplay
             }
 
             var renderer = _renderCamera.GetUniversalAdditionalCameraData().scriptableRenderer;
-            renderer.EnqueuePass(VenueCameraRendererStatics._pass);
+            renderer.EnqueuePass(VenueCameraRendererStatics._yargVenuePPPass);
+            renderer.EnqueuePass(VenueCameraRendererStatics._venueFrameCopyPass);
             renderer.EnqueuePass(VenueCameraRendererStatics._highwayCompositePass);
         }
 
@@ -279,7 +277,7 @@ namespace YARG.Gameplay
             public static RenderTexture _previousFrameTexture;
             public static RTHandle _previousFrameTextureHandle;
 
-            public static readonly int _IsVenueId = Shader.PropertyToID("_YargIsVenue");
+            
             public static readonly int _trailsLengthId = Shader.PropertyToID("_YargTrailLength");
             public static readonly int _previousFrameTextureId = Shader.PropertyToID("_YargPrevFrame");
             public static readonly int _posterizeStepsId = Shader.PropertyToID("_YargPosterizeSteps");
@@ -292,10 +290,10 @@ namespace YARG.Gameplay
 
             public static readonly string[] _mirrorKeywords = { "YARG_MIRROR_LEFT", "YARG_MIRROR_RIGHT", "YARG_MIRROR_CLOCK_CCW", "YARG_MIRROR_NONE" };
 
-            public static VenueFrameCopyPass _pass;
+            public static YargVenuePPPass _yargVenuePPPass;
+            public static VenueFrameCopyPass _venueFrameCopyPass;
             public static HighwayCompositePass _highwayCompositePass;
             public static NoVenueBackgroundPass _noVenueBackgroundPass;
-            public static Material _frameCopyMaterial;
 
             // Shared No Venue camera — one instance across all VenueCameraRenderers
             internal static Camera _noVenueCamera;
@@ -342,9 +340,9 @@ namespace YARG.Gameplay
                 _isInitialized = true;
 
                 SceneManager.sceneUnloaded += OnSceneUnloaded;
-                _frameCopyMaterial = CoreUtils.CreateEngineMaterial("Hidden/YARG/NoVenueQuad");
                 RecreateTextures();
-                _pass = new VenueFrameCopyPass();
+                _yargVenuePPPass = new YargVenuePPPass();
+                _venueFrameCopyPass = new VenueFrameCopyPass();
                 _highwayCompositePass = new HighwayCompositePass();
                 _noVenueBackgroundPass = new NoVenueBackgroundPass();
 
@@ -418,12 +416,12 @@ namespace YARG.Gameplay
                 }
 
                 // Clean up materials held by render passes to prevent leaks across scene loads.
-                CoreUtils.Destroy(_frameCopyMaterial);
-                _frameCopyMaterial = null;
+                CoreUtils.Destroy(_yargVenuePPPass?.material);
+                _yargVenuePPPass = null;
                 CoreUtils.Destroy(_highwayCompositePass?.material);
                 _highwayCompositePass = null;
                 _noVenueBackgroundPass = null;
-                _pass = null;
+                _venueFrameCopyPass = null;
 
                 _isInitialized = false;
             }
