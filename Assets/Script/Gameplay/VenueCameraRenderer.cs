@@ -276,6 +276,8 @@ namespace YARG.Gameplay
         {
             public static RenderTexture _previousFrameTexture;
             public static RTHandle _previousFrameTextureHandle;
+            public static RenderTexture _venuePPTexture;
+            public static RTHandle _venuePPTextureHandle;
 
             
             public static readonly int _trailsLengthId = Shader.PropertyToID("_YargTrailLength");
@@ -382,6 +384,15 @@ namespace YARG.Gameplay
                     _previousFrameTextureHandle = null;
                     _previousFrameTexture.Release();
                     _previousFrameTexture.DiscardContents();
+                    _previousFrameTexture = null;
+                }
+                if (_venuePPTexture != null)
+                {
+                    _venuePPTextureHandle?.Release();
+                    _venuePPTextureHandle = null;
+                    _venuePPTexture.Release();
+                    _venuePPTexture.DiscardContents();
+                    _venuePPTexture = null;
                 }
 
                 var descriptor = new RenderTextureDescriptor(Screen.width, Screen.height, RenderTextureFormat.DefaultHDR, 0, 0);
@@ -396,6 +407,14 @@ namespace YARG.Gameplay
                 Shader.SetGlobalTexture(_previousFrameTextureId, _previousFrameTexture);
 
                 Graphics.Blit(Texture2D.blackTexture, _previousFrameTexture);
+
+                // Venue PP temp texture (avoid renderGraph.CreateTexture which crashes on Vulkan)
+                _venuePPTexture = new RenderTexture(descriptor);
+                _venuePPTexture.filterMode = FilterMode.Bilinear;
+                _venuePPTexture.wrapMode = TextureWrapMode.Clamp;
+                _venuePPTexture.useDynamicScale = true;
+                _venuePPTexture.Create();
+                _venuePPTextureHandle = RTHandles.Alloc(_venuePPTexture);
             }
 
             private static void OnSceneUnloaded(Scene scene)
@@ -407,6 +426,14 @@ namespace YARG.Gameplay
                     _previousFrameTexture.Release();
                     Destroy(_previousFrameTexture);
                     _previousFrameTexture = null;
+                }
+                if (_venuePPTexture != null)
+                {
+                    _venuePPTextureHandle?.Release();
+                    _venuePPTextureHandle = null;
+                    _venuePPTexture.Release();
+                    Destroy(_venuePPTexture);
+                    _venuePPTexture = null;
                 }
 
                 if (_noVenueCamera != null)

@@ -3,12 +3,10 @@
 // Reads URP post-processed frame via framebuffer fetch (LOAD_FRAMEBUFFER_X_INPUT)
 Shader "Hidden/YARG/VenuePP"
 {
-    HLSLINCLUDE
+        HLSLINCLUDE
 
-        #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
-        #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-        #include "Assets/Art/Shaders/ShaderGraph/Includes/Core.hlsl"
+        #include "Packages/com.unity.render-pipelines.core/Runtime/Utilities/Blit.hlsl"
 
         // Mirror mode keywords
         #pragma multi_compile_local _ YARG_MIRROR_LEFT YARG_MIRROR_RIGHT YARG_MIRROR_CLOCK_CCW YARG_MIRROR_NONE
@@ -18,7 +16,6 @@ Shader "Hidden/YARG/VenuePP"
 
         // Previous frame texture for trails effect
         TEXTURE2D(_YargPrevFrame);
-        SAMPLER(sampler_LinearClamp);
 
         // ── Mirror params ──
         float _YargMirrorStartTime;
@@ -35,21 +32,6 @@ Shader "Hidden/YARG/VenuePP"
 
         // ── Trails params ──
         float _YargTrailLength;
-
-        // ── Vertex ──
-        struct Varyings
-        {
-            float4 positionCS   : SV_POSITION;
-            float2 texcoord     : TEXCOORD0;
-        };
-
-        Varyings Vert(Attributes input)
-        {
-            Varyings output;
-            output.positionCS = float4(input.position.xy, 0.0, 1.0);
-            output.texcoord = input.texcoord.xy;
-            return output;
-        }
 
         // ── Mirror UV transformation ──
         float2 YargVenueMirror(float2 uv)
