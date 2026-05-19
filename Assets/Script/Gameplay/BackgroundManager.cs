@@ -20,6 +20,7 @@ using YARG.Venue;
 using YARG.Venue.Characters;
 using YARG.Core.Logging;
 using YARG.Helpers;
+using YARG.Gameplay.Visuals;
 
 #if UNITY_EDITOR
 using UnityEditor.SceneManagement;
@@ -208,18 +209,18 @@ namespace YARG.Gameplay
 
         private void RoutePrevFrameToBackground()
         {
-            // Set global for YargVenuePP.shader trails effect
-            var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTextureId;
-            Shader.SetGlobalTexture(trailsTextureId, _backgroundRT);
+            // Set local texture on venue PP material for trails effect
+            VenueCameraRenderer.VenueCameraRendererStatics._yargVenuePPPass.material.SetTexture(
+                YargVenuePPPass._previousFrameTextureId, _backgroundRT);
             // Set RenderGraph-bound texture for NoVenueBackgroundPass
             VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = _backgroundRTHandle;
         }
 
         private void RoutePrevFrameToTrails()
         {
-            // Set global for YargVenuePP.shader trails effect
-            var trailsTextureId = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTextureId;
-            Shader.SetGlobalTexture(trailsTextureId, VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTexture);
+            // Set local texture on venue PP material for trails effect
+            VenueCameraRenderer.VenueCameraRendererStatics._yargVenuePPPass.material.SetTexture(
+                YargVenuePPPass._previousFrameTextureId, VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTexture);
             // Set RenderGraph-bound texture for NoVenueBackgroundPass
             VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTextureHandle;
         }

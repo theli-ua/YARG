@@ -2,22 +2,35 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal;
+using YARG.Gameplay;
 
 namespace YARG.Gameplay.Visuals
 {
     /// <summary>
-    /// Single combined ScriptableRenderPass for YARG custom venue post-processing effects:
-    /// mirror, scanlines, posterize, trails, vignette.
-    /// Enqueued at AfterRenderingPostProcessing — reads URP post-processed frame as _MainTex.
-    /// Uses pre-allocated temp texture (imported from VenueCameraRendererStatics) to avoid
-    /// renderGraph.CreateTexture which crashes on Vulkan.
+    /// ScriptableRenderPass for YARG custom venue post-processing effects:
+    /// scanlines, posterize, trails, vignette (mirror extracted to MirrorEffectPass).
+    /// Enqueued at AfterRenderingPostProcessing — uses framebuffer fetch for input.
+    /// Uses VenuePostProcessingFrameData for ping-pong source/dest resolution.
     /// Swaps result into cameraColor to avoid copy and enable pass merging.
-    /// Volume params are pushed to global shader properties by VenueCameraRenderer.OnPreCameraRender.
+    /// Params set via public fields by VenueCameraRenderer.OnPreCameraRender, applied to material in RecordRenderGraph.
     /// </summary>
     public sealed class YargVenuePPPass : ScriptableRenderPass
     {
         private readonly ProfilingSampler _profilingSampler = new ProfilingSampler("YargVenuePPPass");
         internal Material material;
+
+        // ── Local material property IDs ──
+        static readonly int _posterizeStepsId = Shader.PropertyToID("_YargPosterizeSteps");
+        static readonly int _scanlineIntensityId = Shader.PropertyToID("_YargScanlineIntensity");
+        static readonly int _scanlineSizeId = Shader.PropertyToID("_YargScanlineSize");
+        static readonly int _trailsLengthId = Shader.PropertyToID("_YargTrailLength");
+        internal static readonly int _previousFrameTextureId = Shader.PropertyToID("_YargPrevFrame");
+
+        // ── Public param fields (set by VenueCameraRenderer.OnPreCameraRender) ──
+        public int PosterizeSteps;
+        public float ScanlineIntensity;
+        public int ScanlineSize;
+        public float TrailsLength;
 
         public YargVenuePPPass()
         {
@@ -27,16 +40,20 @@ namespace YARG.Gameplay.Visuals
 
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
-            var resourceData = frameData.Get<UniversalResourceData>();
-            TextureHandle source = resourceData.activeColorTexture;
-
-            // Import pre-allocated temp texture (avoids renderGraph.CreateTexture Vulkan crash)
-            TextureHandle dest = renderGraph.ImportTexture(VenueCameraRenderer.VenueCameraRendererStatics._venuePPTextureHandle);
+            // Resolve source/dest via shared frame data abstraction
+            var (source, dest) = VenuePostProcessingFrameData.GetSourceAndDest(renderGraph, frameData);
 
             using (var builder = renderGraph.AddRasterRenderPass<PassData>("YargVenuePPPass", out var passData, _profilingSampler))
             {
                 builder.AllowPassCulling(false);
                 passData.material = material;
+
+                // Push local material properties from fields
+                material.SetInt(_posterizeStepsId, PosterizeSteps);
+                material.SetFloat(_scanlineIntensityId, ScanlineIntensity);
+                material.SetInt(_scanlineSizeId, ScanlineSize);
+                material.SetFloat(_trailsLengthId, TrailsLength);
+                material.SetTexture(_previousFrameTextureId, VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTexture);
 
                 builder.SetRenderAttachment(dest, 0, AccessFlags.Write);
                 builder.SetInputAttachment(source, 0);
@@ -47,8 +64,14 @@ namespace YARG.Gameplay.Visuals
                 });
             }
 
-            // Swap result into cameraColor — no copy needed, enables pass merging
-            resourceData.cameraColor = dest;
+            // Set cameraColor to output texture (dest) before swap
+            {
+                var resourceData = frameData.Get<UniversalResourceData>();
+                resourceData.cameraColor = dest;
+            }
+
+            // Swap source/dest for next pass in chain
+            VenuePostProcessingFrameData.Swap(frameData);
         }
 
         private class PassData

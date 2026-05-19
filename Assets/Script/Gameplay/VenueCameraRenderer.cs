@@ -172,11 +172,6 @@ namespace YARG.Gameplay
 
             // Disable the camera after rendering so it only renders when explicitly triggered
             _renderCamera.enabled = false;
-
-            Shader.SetGlobalInteger(VenueCameraRendererStatics._posterizeStepsId, 0);
-            Shader.SetGlobalFloat(VenueCameraRendererStatics._startTimeId, 0);
-            Shader.SetGlobalInt(VenueCameraRendererStatics._scanlineSizeId, 0);
-            Shader.SetGlobalFloat(VenueCameraRendererStatics._trailsLengthId, 0);
         }
 
         private void OnPreCameraRender(ScriptableRenderContext ctx, Camera cam)
@@ -195,38 +190,31 @@ namespace YARG.Gameplay
 
             var stack = VolumeManager.instance.stack;
 
+            var venuePPPass = VenueCameraRendererStatics._yargVenuePPPass;
+            var mirrorPass = VenueCameraRendererStatics._mirrorEffectPass;
+
             var posterizeEffect = stack.GetComponent<PosterizeComponent>();
             if (posterizeEffect.IsActive())
             {
                 YargLogger.LogFormatTrace("Venue PP: posterize, steps: {0}", posterizeEffect.Steps.value);
-                Shader.SetGlobalInteger(VenueCameraRendererStatics._posterizeStepsId, posterizeEffect.Steps.value);
+                venuePPPass.PosterizeSteps = posterizeEffect.Steps.value;
             }
 
             var mirrorEffect = stack.GetComponent<MirrorComponent>();
             if (mirrorEffect.IsActive())
             {
-                for (int i = 0; i < VenueCameraRendererStatics._mirrorKeywords.Length; ++i)
-                {
-                    if (i == mirrorEffect.wipeIndex.value)
-                    {
-                        Shader.EnableKeyword(VenueCameraRendererStatics._mirrorKeywords[i]);
-                    }
-                    else
-                    {
-                        Shader.DisableKeyword(VenueCameraRendererStatics._mirrorKeywords[i]);
-                    }
-                }
                 YargLogger.LogFormatTrace("Venue PP: mirror, wipeStart: {0}", mirrorEffect.startTime.value);
-                Shader.SetGlobalFloat(VenueCameraRendererStatics._wipeTimeId, mirrorEffect.wipeTime.value);
-                Shader.SetGlobalFloat(VenueCameraRendererStatics._startTimeId, mirrorEffect.startTime.value);
+                mirrorPass.MirrorStartTime = mirrorEffect.startTime.value;
+                mirrorPass.MirrorWipeLength = mirrorEffect.wipeTime.value;
+                mirrorPass.MirrorModeIndex = mirrorEffect.wipeIndex.value;
             }
 
             var scanlineEffect = stack.GetComponent<ScanlineComponent>();
             if (scanlineEffect.IsActive())
             {
                 YargLogger.LogFormatTrace("Venue PP: scanline, line count: {0}", scanlineEffect.scanlineCount.value);
-                Shader.SetGlobalFloat(VenueCameraRendererStatics._scanlineIntensityId, scanlineEffect.intensity.value);
-                Shader.SetGlobalInt(VenueCameraRendererStatics._scanlineSizeId, scanlineEffect.scanlineCount.value);
+                venuePPPass.ScanlineIntensity = scanlineEffect.intensity.value;
+                venuePPPass.ScanlineSize = scanlineEffect.scanlineCount.value;
             }
 
             var trailsEffect = stack.GetComponent<TrailsComponent>();
@@ -234,11 +222,23 @@ namespace YARG.Gameplay
             {
                 YargLogger.LogFormatTrace("Venue PP: trails, length: {0}", trailsEffect.length.value);
                 var adjustedLength = Mathf.Pow(trailsEffect.Length, VenueCameraRendererStatics.ActualFPS / 60f);
-                Shader.SetGlobalFloat(VenueCameraRendererStatics._trailsLengthId, adjustedLength);
+                venuePPPass.TrailsLength = adjustedLength;
             }
 
             var renderer = _renderCamera.GetUniversalAdditionalCameraData().scriptableRenderer;
-            renderer.EnqueuePass(VenueCameraRendererStatics._yargVenuePPPass);
+
+            // Conditional enqueue: only run passes when their effects are active
+            bool anyVenuePPActive = posterizeEffect.IsActive() || scanlineEffect.IsActive() || trailsEffect.IsActive();
+            bool mirrorActive = mirrorEffect.IsActive();
+
+            if (anyVenuePPActive)
+            {
+                renderer.EnqueuePass(VenueCameraRendererStatics._yargVenuePPPass);
+            }
+            if (mirrorActive)
+            {
+                renderer.EnqueuePass(VenueCameraRendererStatics._mirrorEffectPass);
+            }
             renderer.EnqueuePass(VenueCameraRendererStatics._venueFrameCopyPass);
             renderer.EnqueuePass(VenueCameraRendererStatics._highwayCompositePass);
         }
@@ -255,7 +255,8 @@ namespace YARG.Gameplay
         {
             public VenueFrameCopyPass()
             {
-                renderPassEvent = RenderPassEvent.AfterRenderingPostProcessing;
+                // Runs after MirrorEffectPass (event 96) to capture final output including mirror
+                renderPassEvent = RenderPassEvent.AfterRenderingPostProcessing + 2;
             }
 
             public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
@@ -279,20 +280,8 @@ namespace YARG.Gameplay
             public static RenderTexture _venuePPTexture;
             public static RTHandle _venuePPTextureHandle;
 
-            
-            public static readonly int _trailsLengthId = Shader.PropertyToID("_YargTrailLength");
-            public static readonly int _previousFrameTextureId = Shader.PropertyToID("_YargPrevFrame");
-            public static readonly int _posterizeStepsId = Shader.PropertyToID("_YargPosterizeSteps");
-            public static readonly int _scanlineIntensityId = Shader.PropertyToID("_YargScanlineIntensity");
-            public static readonly int _scanlineSizeId = Shader.PropertyToID("_YargScanlineSize");
-            public static readonly int _scanlineColor = Shader.PropertyToID("_YargScanlineColor");
-            public static readonly int _scanlineEasingPower = Shader.PropertyToID("_YargScanlineEasingPower");
-            public static readonly int _wipeTimeId = Shader.PropertyToID("_YargMirrorWipeLength");
-            public static readonly int _startTimeId = Shader.PropertyToID("_YargMirrorStartTime");
-
-            public static readonly string[] _mirrorKeywords = { "YARG_MIRROR_LEFT", "YARG_MIRROR_RIGHT", "YARG_MIRROR_CLOCK_CCW", "YARG_MIRROR_NONE" };
-
             public static YargVenuePPPass _yargVenuePPPass;
+            public static MirrorEffectPass _mirrorEffectPass;
             public static VenueFrameCopyPass _venueFrameCopyPass;
             public static HighwayCompositePass _highwayCompositePass;
             public static NoVenueBackgroundPass _noVenueBackgroundPass;
@@ -344,12 +333,10 @@ namespace YARG.Gameplay
                 SceneManager.sceneUnloaded += OnSceneUnloaded;
                 RecreateTextures();
                 _yargVenuePPPass = new YargVenuePPPass();
+                _mirrorEffectPass = new MirrorEffectPass();
                 _venueFrameCopyPass = new VenueFrameCopyPass();
                 _highwayCompositePass = new HighwayCompositePass();
                 _noVenueBackgroundPass = new NoVenueBackgroundPass();
-
-                Shader.SetGlobalColor(_scanlineColor, Color.black);
-                Shader.SetGlobalFloat(_scanlineEasingPower, 2.0f);
 
                 FPS = SettingsManager.Settings.VenueFpsCap.Value;
                 _venueLayerMask = LayerMask.GetMask("Venue");
@@ -404,7 +391,6 @@ namespace YARG.Gameplay
                 _previousFrameTexture.useDynamicScale = true;
                 _previousFrameTexture.Create();
                 _previousFrameTextureHandle = RTHandles.Alloc(_previousFrameTexture);
-                Shader.SetGlobalTexture(_previousFrameTextureId, _previousFrameTexture);
 
                 Graphics.Blit(Texture2D.blackTexture, _previousFrameTexture);
 
@@ -445,6 +431,8 @@ namespace YARG.Gameplay
                 // Clean up materials held by render passes to prevent leaks across scene loads.
                 CoreUtils.Destroy(_yargVenuePPPass?.material);
                 _yargVenuePPPass = null;
+                CoreUtils.Destroy(_mirrorEffectPass?.material);
+                _mirrorEffectPass = null;
                 CoreUtils.Destroy(_highwayCompositePass?.material);
                 _highwayCompositePass = null;
                 _noVenueBackgroundPass = null;
