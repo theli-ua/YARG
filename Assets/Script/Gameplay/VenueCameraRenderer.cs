@@ -24,6 +24,10 @@ namespace YARG.Gameplay
         private UniversalRenderPipelineAsset UniversalRenderPipelineAsset;
         private float _previousRenderScale;
 
+        // Pass enqueue flags — set in Update(), consumed in OnPreCameraRender
+        private bool _enqueueVenuePP;
+        private bool _enqueueMirror;
+
         public static float TargetFPS { get => VenueCameraRendererStatics.TargetFPS; }
         public static float ActualFPS { get => VenueCameraRendererStatics.ActualFPS; }
 
@@ -80,8 +84,6 @@ namespace YARG.Gameplay
             RenderPipelineManager.endCameraRendering -= OnEndCameraRender;
         }
 
-        // NoVenueCamera is shared static — destroyed by VenueCameraRendererStatics.OnSceneUnloaded()
-
         private void Update()
         {
             if (ScreenSizeDetector.HasScreenSizeChanged)
@@ -99,25 +101,27 @@ namespace YARG.Gameplay
                 _previousRenderScale = renderScale;
             }
 
-            // Update the global volume stack with venue effects so SlowFPS
-            // (and any other effects read in Update()) can access them.
+            // Update volume stack ONCE per frame. All volume components read here.
             VolumeManager.instance.Update(_renderCamera.gameObject.transform, VenueCameraRendererStatics._venueLayerMask);
 
-            VenueCameraRendererStatics._effectiveFps = VenueCameraRendererStatics.FPS;
-
             var stack = VolumeManager.instance.stack;
-            var fpsEffect = stack.GetComponent<SlowFPSComponent>();
 
+            // SlowFPS controls venue render rate
+            VenueCameraRendererStatics._effectiveFps = VenueCameraRendererStatics.FPS;
+            var fpsEffect = stack.GetComponent<SlowFPSComponent>();
             if (fpsEffect.IsActive())
             {
-                // Divisor is relative to 60 FPS, so target is always 60/divisor
                 VenueCameraRendererStatics._effectiveFps = Mathf.RoundToInt(60f / fpsEffect.Divisor.value);
-                // Clamp to FPS cap if non-zero (no cap when FPS=0)
                 if (VenueCameraRendererStatics.FPS > 0)
                 {
                     VenueCameraRendererStatics._effectiveFps = Mathf.Min(VenueCameraRendererStatics.FPS, VenueCameraRendererStatics._effectiveFps);
                 }
             }
+
+            // Read venue PP effects and set enqueue flags (consumed in OnPreCameraRender)
+            _enqueueVenuePP = false;
+            _enqueueMirror = false;
+            ApplyVolumeEffects(stack);
 
             // Increment wall clock time regardless of whether we render a frame
             var currentFrameTime = Time.unscaledTime;
@@ -176,20 +180,27 @@ namespace YARG.Gameplay
 
         private void OnPreCameraRender(ScriptableRenderContext ctx, Camera cam)
         {
-            // Handle venue camera
             if (cam != _renderCamera)
             {
                 return;
             }
 
-            // URP replaces VolumeManager.instance.stack with either the global stack
-            // or the camera's local volumeStack during rendering setup, depending on
-            // the volume framework update mode. We need to update the same stack that
-            // URP is using, so we update it here (after URP's setup) before reading.
-            VolumeManager.instance.Update(VolumeManager.instance.stack, _renderCamera.gameObject.transform, VenueCameraRendererStatics._venueLayerMask);
+            // Enqueue passes based on flags set in Update()
+            var renderer = _renderCamera.GetUniversalAdditionalCameraData().scriptableRenderer;
+            if (_enqueueVenuePP)
+            {
+                renderer.EnqueuePass(VenueCameraRendererStatics._yargVenuePPPass);
+            }
+            if (_enqueueMirror)
+            {
+                renderer.EnqueuePass(VenueCameraRendererStatics._mirrorEffectPass);
+            }
+            renderer.EnqueuePass(VenueCameraRendererStatics._venueFrameCopyPass);
+            renderer.EnqueuePass(VenueCameraRendererStatics._highwayCompositePass);
+        }
 
-            var stack = VolumeManager.instance.stack;
-
+        private void ApplyVolumeEffects(VolumeStack stack)
+        {
             var venuePPPass = VenueCameraRendererStatics._yargVenuePPPass;
             var mirrorPass = VenueCameraRendererStatics._mirrorEffectPass;
 
@@ -225,22 +236,9 @@ namespace YARG.Gameplay
                 venuePPPass.TrailsLength = adjustedLength;
             }
 
-            var renderer = _renderCamera.GetUniversalAdditionalCameraData().scriptableRenderer;
-
-            // Conditional enqueue: only run passes when their effects are active
-            bool anyVenuePPActive = posterizeEffect.IsActive() || scanlineEffect.IsActive() || trailsEffect.IsActive();
-            bool mirrorActive = mirrorEffect.IsActive();
-
-            if (anyVenuePPActive)
-            {
-                renderer.EnqueuePass(VenueCameraRendererStatics._yargVenuePPPass);
-            }
-            if (mirrorActive)
-            {
-                renderer.EnqueuePass(VenueCameraRendererStatics._mirrorEffectPass);
-            }
-            renderer.EnqueuePass(VenueCameraRendererStatics._venueFrameCopyPass);
-            renderer.EnqueuePass(VenueCameraRendererStatics._highwayCompositePass);
+            // Set enqueue flags — consumed in OnPreCameraRender
+            _enqueueVenuePP = posterizeEffect.IsActive() || scanlineEffect.IsActive() || trailsEffect.IsActive();
+            _enqueueMirror = mirrorEffect.IsActive();
         }
 
         private void Render()
