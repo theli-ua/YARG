@@ -19,6 +19,10 @@ namespace YARG.Gameplay.Visuals
     public class HighwayCameraRendering : MonoBehaviour
     {
         public const int MAX_MATRICES = 32;
+        private const int MAT_VIEW = 0;
+        private const int MAT_INV_VIEW = 1;
+        private const int MAT_PROJ = 2;
+        private const int MATS_PER_HIGHWAY = 3;
 
         //For multiple lanes, cap the lane width to a percentage of the screen width, 1.0f = 100% of screen width
         private const float MAX_LANE_SCREEN_WIDTH_PERCENT = 0.45f;
@@ -59,15 +63,21 @@ namespace YARG.Gameplay.Visuals
         private readonly float[] _zeroFadePositions = new float[MAX_MATRICES];
         private readonly float[] _fadeSize = new float[MAX_MATRICES];
         private readonly float[] _fadeParams = new float[MAX_MATRICES * 2];
-        private readonly Matrix4x4[] _camViewMatrices = new Matrix4x4[MAX_MATRICES];
-        private readonly Matrix4x4[] _camInvViewMatrices = new Matrix4x4[MAX_MATRICES];
-        private readonly Matrix4x4[] _camProjMatrices = new Matrix4x4[MAX_MATRICES];
+        // Interleaved staging: [highway * 3 + 0] = view, [highway * 3 + 1] = invView, [highway * 3 + 2] = proj
+        private readonly Matrix4x4[] _camMatrices = new Matrix4x4[MAX_MATRICES * 3];
         private readonly float[] _laneScales = new float[MAX_MATRICES];
 
+        // Persistent structured buffers — allocated once, never disposed (~6.4KB GPU, single instance)
+        private static ComputeBuffer s_cameraMatrixBuffer; // 32 × 3 Matrix4x4 (interleaved: view, invView, proj)
+        private static ComputeBuffer s_curveFactorBuffer;  // 32 floats
+        private static ComputeBuffer s_fadeParamsBuffer;   // 32 × 2 floats
+
+        // Per-entry dirty flags
+        private static readonly bool[] s_dirtyMatrices = new bool[MAX_MATRICES];
+        private static readonly bool[] s_dirtyFade = new bool[MAX_MATRICES];
+
         public static readonly int YargHighwaysNumberID = Shader.PropertyToID("_YargHighwaysN");
-        public static readonly int YargHighwayCamViewMatricesID = Shader.PropertyToID("_YargCamViewMatrices");
-        public static readonly int YargHighwayCamInvViewMatricesID = Shader.PropertyToID("_YargCamInvViewMatrices");
-        public static readonly int YargHighwayCamProjMatricesID = Shader.PropertyToID("_YargCamProjMatrices");
+        public static readonly int YargHighwayCamMatricesID = Shader.PropertyToID("_YargCamMatrices");
         public static readonly int YargCurveFactorsID = Shader.PropertyToID("_YargCurveFactors");
         public static readonly int YargFadeParamsID = Shader.PropertyToID("_YargFadeParams");
 
@@ -85,8 +95,21 @@ namespace YARG.Gameplay.Visuals
             _horizontalOffsetPx = 0f;
             _scaleMultiplier = 1f;
 
+            // Allocate structured buffers once (null-guard, never disposed — ~6.4KB GPU)
+            if (s_cameraMatrixBuffer == null)
+            {
+                s_cameraMatrixBuffer = new ComputeBuffer(MAX_MATRICES * MATS_PER_HIGHWAY, 64, ComputeBufferType.Default);
+                s_curveFactorBuffer = new ComputeBuffer(MAX_MATRICES, 4, ComputeBufferType.Default);
+                s_fadeParamsBuffer = new ComputeBuffer(MAX_MATRICES * 2, 4, ComputeBufferType.Default);
+
+                Shader.SetGlobalBuffer(YargHighwayCamMatricesID, s_cameraMatrixBuffer);
+                Shader.SetGlobalBuffer(YargCurveFactorsID, s_curveFactorBuffer);
+                Shader.SetGlobalBuffer(YargFadeParamsID, s_fadeParamsBuffer);
+            }
+
             RecreateHighwayOutputTexture();
             Shader.SetGlobalInteger(YargHighwaysNumberID, 0);
+
             RenderPipelineManager.beginCameraRendering += OnPreCameraRender;
             SceneManager.sceneUnloaded += OnSceneUnloaded;
         }
@@ -129,7 +152,8 @@ namespace YARG.Gameplay.Visuals
 
         public Vector2 WorldToViewport(Vector3 positionWs, int index)
         {
-            Vector4 clipSpacePos = (_camProjMatrices[index] * _camViewMatrices[index]) * new Vector4(positionWs.x, positionWs.y, positionWs.z, 1.0f);
+            int b = index * MATS_PER_HIGHWAY;
+            Vector4 clipSpacePos = (_camMatrices[b + MAT_PROJ] * _camMatrices[b + MAT_VIEW]) * new Vector4(positionWs.x, positionWs.y, positionWs.z, 1.0f);
             // Perspective divide to get NDC
             float ndcX = clipSpacePos.x / clipSpacePos.w;
             float ndcY = clipSpacePos.y / clipSpacePos.w;
@@ -280,19 +304,40 @@ namespace YARG.Gameplay.Visuals
 
         public void UpdateCurveFactor(float curveFactor, int index)
         {
-            _curveFactors[index] = curveFactor;
-            Shader.SetGlobalFloatArray(YargCurveFactorsID, _curveFactors);
+            if (_curveFactors[index] != curveFactor)
+            {
+                _curveFactors[index] = curveFactor;
+                s_curveFactorBuffer.SetData(_curveFactors, index, index, 1);
+            }
         }
 
         private void RecalculateFadeParams()
         {
+            bool hasDirty = false;
             for (int index = 0; index < _cameras.Count; ++index)
             {
-                var fadeParams = CalculateFadeParams(index, _highwayPositions[index], _zeroFadePositions[index], _fadeSize[index]);
-                _fadeParams[index * 2] = fadeParams.x;
-                _fadeParams[index * 2 + 1] = fadeParams.y;
+                var fp = CalculateFadeParams(index, _highwayPositions[index], _zeroFadePositions[index], _fadeSize[index]);
+                int b = index * 2;
+                if (_fadeParams[b] != fp.x || _fadeParams[b + 1] != fp.y)
+                {
+                    _fadeParams[b] = fp.x;
+                    _fadeParams[b + 1] = fp.y;
+                    s_dirtyFade[index] = true;
+                    hasDirty = true;
+                }
             }
-            Shader.SetGlobalFloatArray(YargFadeParamsID, _fadeParams);
+
+            if (hasDirty)
+            {
+                for (int i = 0; i < MAX_MATRICES; i++)
+                {
+                    if (s_dirtyFade[i])
+                    {
+                        s_fadeParamsBuffer.SetData(_fadeParams, i * 2, i * 2, 2);
+                    }
+                }
+                Array.Clear(s_dirtyFade, 0, s_dirtyFade.Length);
+            }
         }
 
         public void UpdateFadeParams(int index, float zeroFadePosition, float fadeSize)
@@ -357,6 +402,26 @@ namespace YARG.Gameplay.Visuals
 
         }
 
+      /// <summary>
+        /// Uploads only dirty matrix entries to GPU structured buffer, then clears dirty flags.
+        /// Single SetData per dirty highway uploads all 3 interleaved matrices.
+        /// </summary>
+        private void UploadDirtyBuffers()
+        {
+            bool hasDirty = false;
+            for (int i = 0; i < MAX_MATRICES; i++)
+            {
+                if (s_dirtyMatrices[i])
+                {
+                    // Upload 3 interleaved matrices (view, invView, proj) in one call
+                    s_cameraMatrixBuffer.SetData(_camMatrices, i * MATS_PER_HIGHWAY, i * MATS_PER_HIGHWAY, MATS_PER_HIGHWAY);
+                    hasDirty = true;
+                }
+            }
+            if (hasDirty)
+                Array.Clear(s_dirtyMatrices, 0, s_dirtyMatrices.Length);
+        }
+
         private void OnDisable()
         {
             RenderPipelineManager.beginCameraRendering -= OnPreCameraRender;
@@ -408,13 +473,22 @@ namespace YARG.Gameplay.Visuals
                     -1f * SettingsManager.Settings.HighwayTiltMultiplier.Value);
                 OffsetLocalPosition(camera.transform, multiplayerXOffset);
 
-                _camViewMatrices[i] = camera.worldToCameraMatrix;
-                _camInvViewMatrices[i] = camera.cameraToWorldMatrix;
+                Matrix4x4 newView = camera.worldToCameraMatrix;
+
+                int b = i * MATS_PER_HIGHWAY;
+                if (!_camMatrices[b + MAT_VIEW].Equals(newView))
+                {
+                    // View changed => all 3 matrices dirty at this index
+                    _camMatrices[b + MAT_VIEW] = newView;
+                    _camMatrices[b + MAT_INV_VIEW] = camera.cameraToWorldMatrix;
+                    s_dirtyMatrices[i] = true;
+                }
+
                 highwayIndex++;
             }
 
-            Shader.SetGlobalMatrixArray(YargHighwayCamViewMatricesID, _camViewMatrices);
-            Shader.SetGlobalMatrixArray(YargHighwayCamInvViewMatricesID, _camInvViewMatrices);
+            UploadDirtyBuffers();
+
             Shader.SetGlobalInteger(YargHighwaysNumberID, _cameras.Count);
             var renderer = _renderCamera.GetUniversalAdditionalCameraData().scriptableRenderer;
             renderer.EnqueuePass(_fadeCalcPass);
@@ -442,8 +516,17 @@ namespace YARG.Gameplay.Visuals
             for (int i = 0; i < _cameras.Count; ++i)
             {
                 var camera = _cameras[i];
-                _camViewMatrices[i] = camera.worldToCameraMatrix;
-                _camInvViewMatrices[i] = camera.cameraToWorldMatrix;
+                int b = i * MATS_PER_HIGHWAY;
+
+                Matrix4x4 newView = camera.worldToCameraMatrix;
+
+                if (!_camMatrices[b + MAT_VIEW].Equals(newView))
+                {
+                    // View changed => all 3 matrices dirty at this index
+                    _camMatrices[b + MAT_VIEW] = newView;
+                    _camMatrices[b + MAT_INV_VIEW] = camera.cameraToWorldMatrix;
+                    s_dirtyMatrices[i] = true;
+                }
 
                 float safeScreenWidth = Mathf.Max(Screen.width, 0.001f);
                 float horizontalOffsetNdc = _horizontalOffsetPx / safeScreenWidth * 2f;
@@ -454,9 +537,10 @@ namespace YARG.Gameplay.Visuals
                         highwayIndex, HighwayCount(), _laneScales[i], horizontalOffsetNdc);
                     highwayIndex++;
                 }
-                _camProjMatrices[i] = GL.GetGPUProjectionMatrix(projMatrix, SystemInfo.graphicsUVStartsAtTop);
-                Shader.SetGlobalMatrixArray(YargHighwayCamProjMatricesID, _camProjMatrices);
+                _camMatrices[b + MAT_PROJ] = GL.GetGPUProjectionMatrix(projMatrix, SystemInfo.graphicsUVStartsAtTop);
             }
+
+            UploadDirtyBuffers();
         }
 
         /// <summary>
@@ -652,7 +736,7 @@ namespace YARG.Gameplay.Visuals
             if (camRotation.HasValue)
             {
                 camera.transform.localRotation = Quaternion.Euler(new Vector3().WithX(camRotation.Value));
-                _camViewMatrices[trackIndex] = camera.worldToCameraMatrix;
+                _camMatrices[trackIndex * MATS_PER_HIGHWAY + MAT_VIEW] = camera.worldToCameraMatrix;
             }
 
             try
@@ -686,7 +770,7 @@ namespace YARG.Gameplay.Visuals
             finally
             {
                 camera.transform.localRotation = originalRotation;
-                _camViewMatrices[trackIndex] = camera.worldToCameraMatrix;
+                _camMatrices[trackIndex * MATS_PER_HIGHWAY + MAT_VIEW] = camera.worldToCameraMatrix;
             }
         }
 
@@ -724,7 +808,7 @@ namespace YARG.Gameplay.Visuals
             if (camRotation.HasValue)
             {
                 camera.transform.localRotation = Quaternion.Euler(new Vector3().WithX(camRotation.Value));
-                _camViewMatrices[cameraIndex] = camera.worldToCameraMatrix;
+                _camMatrices[cameraIndex * MATS_PER_HIGHWAY + MAT_VIEW] = camera.worldToCameraMatrix;
             }
 
             try
@@ -765,7 +849,7 @@ namespace YARG.Gameplay.Visuals
             {
                 //Reset camera rotation to original position
                 camera.transform.localRotation = originalRotation;
-                _camViewMatrices[cameraIndex] = camera.worldToCameraMatrix;
+                _camMatrices[cameraIndex * MATS_PER_HIGHWAY + MAT_VIEW] = camera.worldToCameraMatrix;
             }
         }
 

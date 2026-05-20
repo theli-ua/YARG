@@ -20,6 +20,8 @@ Shader "HighwaysAlphaMask"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Assets/Art/Shaders/highways.hlsl"
 
+            StructuredBuffer<float> _YargFadeParams;
+
             struct Attributes
             {
                 float4 positionOS : POSITION;

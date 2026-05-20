@@ -1,12 +1,13 @@
 #ifndef YARG_HIGHWAYS_INCLUDED
 #define YARG_HIGHWAYS_INCLUDED
 #define MAX_MATRICES 32
+#define MATS_PER_HIGHWAY 3
+
 uniform int _YargHighwaysN;
-uniform float4x4 _YargCamViewMatrices[MAX_MATRICES];
-uniform float4x4 _YargCamInvViewMatrices[MAX_MATRICES];
-uniform float4x4 _YargCamProjMatrices[MAX_MATRICES];
-uniform float _YargCurveFactors[MAX_MATRICES];
-uniform float _YargFadeParams[MAX_MATRICES * 2];
+
+// Single interleaved buffer: [index*3+0]=view, [index*3+1]=invView, [index*3+2]=proj
+StructuredBuffer<float4x4> _YargCamMatrices;
+StructuredBuffer<float> _YargCurveFactors;
 
 // World position to highway index
 inline int WorldPosToIndex(float3 positionWS)
@@ -15,6 +16,11 @@ inline int WorldPosToIndex(float3 positionWS)
     index = clamp(index, 0, _YargHighwaysN - 1);
     return index;
 }
+
+// Accessors for interleaved matrix buffer
+inline float4x4 YargGetViewMatrix(int index)    { return _YargCamMatrices[index * MATS_PER_HIGHWAY + 0]; }
+inline float4x4 YargGetInvViewMatrix(int index) { return _YargCamMatrices[index * MATS_PER_HIGHWAY + 1]; }
+inline float4x4 YargGetProjMatrix(int index)    { return _YargCamMatrices[index * MATS_PER_HIGHWAY + 2]; }
 
 // Default transform
 inline float4 DefTransformWorldToHClip(float3 positionWS)
@@ -28,7 +34,7 @@ inline float3 YargWorldSpaceCameraPos(float3 positionWS) {
     else {
         int index = WorldPosToIndex(positionWS);
         // Camera world position is the translation column of inverse view matrix
-        return _YargCamInvViewMatrices[index]._m03_m13_m23;
+        return YargGetInvViewMatrix(index)._m03_m13_m23;
     }
 }
 
@@ -37,7 +43,7 @@ inline float4x4 YargCamProjMatrix(float3 positionWS)
     if (_YargHighwaysN > 0)
     {
         int index = WorldPosToIndex(positionWS);
-        return _YargCamProjMatrices[index];
+        return YargGetProjMatrix(index);
     } else {
         return UNITY_MATRIX_P;
     }
@@ -48,7 +54,7 @@ inline float4x4 YargViewMatrix(float3 positionWS)
     if (_YargHighwaysN > 0)
     {
         int index = WorldPosToIndex(positionWS);
-        return _YargCamViewMatrices[index];
+        return YargGetViewMatrix(index);
     } else {
         return UNITY_MATRIX_V;
     }
@@ -131,8 +137,8 @@ inline float4 YargTransformWorldToHClip(float3 positionWS)
 
     // Present as if its a single highway, using corresponding
     // camera's matrices
-    float4 viewPOS = mul(_YargCamViewMatrices[index], float4(positionWS, 1.0));
-    float4 clipPOS = mul(_YargCamProjMatrices[index], viewPOS);
+    float4 viewPOS = mul(YargGetViewMatrix(index), float4(positionWS, 1.0));
+    float4 clipPOS = mul(YargGetProjMatrix(index), viewPOS);
 
 #ifdef _RAISE_Z
     // We use this to raise certain elements to be rendered on top of the others without actually
