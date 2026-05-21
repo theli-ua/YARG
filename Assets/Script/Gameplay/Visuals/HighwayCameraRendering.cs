@@ -85,6 +85,23 @@ namespace YARG.Gameplay.Visuals
 
         public static RTHandle HighwaysColorTextureHandle => _highwaysDepthlessColorTextureHandle;
 
+        // Allocate structured buffers before any scene loads (BeforeSceneLoad).
+        // Highways shader is injected everywhere — if buffers are unset, UI rendering breaks.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void InitializeBuffers()
+        {
+            if (s_cameraMatrixBuffer != null)
+                return; // Already initialized (e.g. domain reload guard)
+
+            s_cameraMatrixBuffer = new ComputeBuffer(MAX_MATRICES * MATS_PER_HIGHWAY, 64, ComputeBufferType.Default);
+            s_curveFactorBuffer = new ComputeBuffer(MAX_MATRICES, 4, ComputeBufferType.Default);
+            s_fadeParamsBuffer = new ComputeBuffer(MAX_MATRICES * 2, 4, ComputeBufferType.Default);
+
+            Shader.SetGlobalBuffer(YargHighwayCamMatricesID, s_cameraMatrixBuffer);
+            Shader.SetGlobalBuffer(YargCurveFactorsID, s_curveFactorBuffer);
+            Shader.SetGlobalBuffer(YargFadeParamsID, s_fadeParamsBuffer);
+        }
+
         private void Awake()
         {
             _gameManager = FindAnyObjectByType<GameManager>();
@@ -95,17 +112,9 @@ namespace YARG.Gameplay.Visuals
             _horizontalOffsetPx = 0f;
             _scaleMultiplier = 1f;
 
-            // Allocate structured buffers once (null-guard, never disposed — ~6.4KB GPU)
+            // Buffers already allocated by InitializeBuffers() (BeforeSceneLoad). Defensive null-guard only.
             if (s_cameraMatrixBuffer == null)
-            {
-                s_cameraMatrixBuffer = new ComputeBuffer(MAX_MATRICES * MATS_PER_HIGHWAY, 64, ComputeBufferType.Default);
-                s_curveFactorBuffer = new ComputeBuffer(MAX_MATRICES, 4, ComputeBufferType.Default);
-                s_fadeParamsBuffer = new ComputeBuffer(MAX_MATRICES * 2, 4, ComputeBufferType.Default);
-
-                Shader.SetGlobalBuffer(YargHighwayCamMatricesID, s_cameraMatrixBuffer);
-                Shader.SetGlobalBuffer(YargCurveFactorsID, s_curveFactorBuffer);
-                Shader.SetGlobalBuffer(YargFadeParamsID, s_fadeParamsBuffer);
-            }
+                InitializeBuffers();
 
             RecreateHighwayOutputTexture();
             Shader.SetGlobalInteger(YargHighwaysNumberID, 0);
