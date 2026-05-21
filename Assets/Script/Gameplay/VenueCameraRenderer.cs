@@ -84,7 +84,7 @@ namespace YARG.Gameplay
             RenderPipelineManager.endCameraRendering -= OnEndCameraRender;
         }
 
-        private void Update()
+        private void LateUpdate()
         {
             if (ScreenSizeDetector.HasScreenSizeChanged)
             {
