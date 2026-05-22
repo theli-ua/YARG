@@ -18,7 +18,7 @@ Shader "Hidden/YARG/VenuePP"
     #include "Packages/com.unity.render-pipelines.core/Runtime/Utilities/Blit.hlsl"
 
     // Framebuffer fetch input — reads current framebuffer (URP post-processed output)
-    FRAMEBUFFER_INPUT_HALF(0)
+    FRAMEBUFFER_INPUT_HALF(0);
 
     // Previous frame texture for trails effect
     TEXTURE2D(_YargPrevFrame);
