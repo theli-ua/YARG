@@ -41,7 +41,11 @@ namespace YARG.Gameplay
 
             _renderCamera.allowMSAA = true;
             _renderCamera.targetTexture = null;
-            _renderCamera.allowDynamicResolution = true;
+            if (renderScale != 1.0)
+            {
+                // Only if actually needed otherwise it trips the TAA
+                _renderCamera.allowDynamicResolution = true;
+            }
             ScalableBufferManager.ResizeBuffers(renderScale, renderScale);
 
             var cameraData = _renderCamera.GetUniversalAdditionalCameraData();
