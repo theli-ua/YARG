@@ -32,7 +32,7 @@ namespace YARG.Gameplay.Visuals
             {
                 var resourceData = frameData.Get<UniversalResourceData>();
                 data.currentSource = resourceData.activeColorTexture;
-                data.currentDest = renderGraph.ImportTexture(VenueCameraRenderer.VenueCameraRendererStatics._venuePPTextureHandle);
+                data.currentDest = renderGraph.ImportTexture(VenueCameraRenderer.VenueCameraRendererStatics._venuePPTexture);
             }
 
             return (data.currentSource, data.currentDest);

@@ -44,10 +44,8 @@ namespace YARG.Gameplay.Visuals
         private Camera _renderCamera;
         private GameManager _gameManager;
 
-        private static RTHandle _highwaysDepthlessColorTextureHandle;
-
-        private RenderTexture _highwaysColorTexture;
-        private RenderTexture _highwaysDepthlessColorTexture;
+        private static RTHandle _highwaysColorTexture;
+        private static RTHandle _highwaysDepthlessColorTexture;
 
         private ScriptableRenderPass _fadeCalcPass;
         private ScriptableRenderPass _cleanupPass;
@@ -83,7 +81,7 @@ namespace YARG.Gameplay.Visuals
 
         public static readonly int YargHighwaysColorTextureID = Shader.PropertyToID("_YargHighwaysColorTexture");
 
-        public static RTHandle HighwaysColorTextureHandle => _highwaysDepthlessColorTextureHandle;
+        public static RTHandle HighwaysColorTextureHandle => _highwaysDepthlessColorTexture;
 
         // Allocate structured buffers before any scene loads (BeforeSceneLoad).
         // Highways shader is injected everywhere — if buffers are unset, UI rendering breaks.
@@ -143,16 +141,12 @@ namespace YARG.Gameplay.Visuals
             var colorDescriptor = new RenderTextureDescriptor(
                 Screen.width, Screen.height,
                 RenderTextureFormat.DefaultHDR, 16);
-            _highwaysColorTexture = new RenderTexture(colorDescriptor);
-            _highwaysColorTexture.Create();
+            _highwaysColorTexture = RTHandles.Alloc(colorDescriptor, name: "HighwaysColorTexture");
             _renderCamera.targetTexture = _highwaysColorTexture;
 
             // I could not figure out how to use combined RenderTexture as source for blit in the RenderGraph pass, so we need a copy without depth
             colorDescriptor.depthBufferBits = 0;
-            _highwaysDepthlessColorTexture = new RenderTexture(colorDescriptor);
-            _highwaysDepthlessColorTexture.Create();
-
-            _highwaysDepthlessColorTextureHandle = RTHandles.Alloc(_highwaysDepthlessColorTexture);
+            _highwaysDepthlessColorTexture = RTHandles.Alloc(colorDescriptor, name: "HighwaysDepthlessColorTexture");
             // Expose as global shader texture for HighwayCompositePass
             Shader.SetGlobalTexture(YargHighwaysColorTextureID, _highwaysColorTexture);
 
@@ -394,19 +388,10 @@ namespace YARG.Gameplay.Visuals
 
         private void Cleanup()
         {
-            if (_highwaysColorTexture != null)
-            {
-                _highwaysColorTexture.Release();
-                _highwaysColorTexture = null;
-            }
-
-            if (_highwaysDepthlessColorTexture != null)
-            {
-                _highwaysDepthlessColorTextureHandle?.Release();
-                _highwaysDepthlessColorTextureHandle = null;
-                _highwaysDepthlessColorTexture.Release();
-                _highwaysDepthlessColorTexture = null;
-            }
+            _highwaysColorTexture?.Release();
+            _highwaysColorTexture = null;
+            _highwaysDepthlessColorTexture?.Release();
+            _highwaysDepthlessColorTexture = null;
 
 
         }

@@ -265,7 +265,7 @@ namespace YARG.Gameplay
                 // This is used by NoVenueCamera to show the last rendered frame during FPS skips.
                 // And for trails PP effect
                 TextureHandle source = resourceData.activeColorTexture;
-                TextureHandle frameCopyTexture = renderGraph.ImportTexture(VenueCameraRendererStatics._previousFrameTextureHandle);
+                TextureHandle frameCopyTexture = renderGraph.ImportTexture(VenueCameraRendererStatics._previousFrameTexture);
 
                 renderGraph.AddCopyPass(source, frameCopyTexture, passName: "Venue Frame Copy");
             }
@@ -273,10 +273,8 @@ namespace YARG.Gameplay
 
         public static class VenueCameraRendererStatics
         {
-            public static RenderTexture _previousFrameTexture;
-            public static RTHandle _previousFrameTextureHandle;
-            public static RenderTexture _venuePPTexture;
-            public static RTHandle _venuePPTextureHandle;
+            public static RTHandle _previousFrameTexture;
+            public static RTHandle _venuePPTexture;
 
             public static YargVenuePPPass _yargVenuePPPass;
             public static MirrorEffectPass _mirrorEffectPass;
@@ -362,63 +360,27 @@ namespace YARG.Gameplay
 
             public static void RecreateTextures()
             {
-                var UniversalRenderPipelineAsset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
-                if (_previousFrameTexture != null)
-                {
-                    _previousFrameTextureHandle?.Release();
-                    _previousFrameTextureHandle = null;
-                    _previousFrameTexture.Release();
-                    _previousFrameTexture.DiscardContents();
-                    _previousFrameTexture = null;
-                }
-                if (_venuePPTexture != null)
-                {
-                    _venuePPTextureHandle?.Release();
-                    _venuePPTextureHandle = null;
-                    _venuePPTexture.Release();
-                    _venuePPTexture.DiscardContents();
-                    _venuePPTexture = null;
-                }
+                var universalRenderPipelineAsset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
+                _previousFrameTexture?.Release();
+                _venuePPTexture?.Release();
 
                 var descriptor = new RenderTextureDescriptor(Screen.width, Screen.height, RenderTextureFormat.DefaultHDR, 0, 0);
-                descriptor.msaaSamples = UniversalRenderPipelineAsset.msaaSampleCount;
+                descriptor.msaaSamples = universalRenderPipelineAsset.msaaSampleCount;
+                descriptor.useDynamicScale = true;
 
-                _previousFrameTexture = new RenderTexture(descriptor);
-                _previousFrameTexture.filterMode = FilterMode.Bilinear;
-                _previousFrameTexture.wrapMode = TextureWrapMode.Clamp;
-                _previousFrameTexture.useDynamicScale = true;
-                _previousFrameTexture.Create();
-                _previousFrameTextureHandle = RTHandles.Alloc(_previousFrameTexture);
-
+                _previousFrameTexture = RTHandles.Alloc(descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "PreviousFrameTexture");
                 Graphics.Blit(Texture2D.blackTexture, _previousFrameTexture);
 
                 // Venue PP temp texture (avoid renderGraph.CreateTexture which crashes on Vulkan)
-                _venuePPTexture = new RenderTexture(descriptor);
-                _venuePPTexture.filterMode = FilterMode.Bilinear;
-                _venuePPTexture.wrapMode = TextureWrapMode.Clamp;
-                _venuePPTexture.useDynamicScale = true;
-                _venuePPTexture.Create();
-                _venuePPTextureHandle = RTHandles.Alloc(_venuePPTexture);
+                _venuePPTexture = RTHandles.Alloc(descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "VenuePPTexture");
             }
 
             private static void OnSceneUnloaded(Scene scene)
             {
-                if (_previousFrameTexture != null)
-                {
-                    _previousFrameTextureHandle?.Release();
-                    _previousFrameTextureHandle = null;
-                    _previousFrameTexture.Release();
-                    Destroy(_previousFrameTexture);
-                    _previousFrameTexture = null;
-                }
-                if (_venuePPTexture != null)
-                {
-                    _venuePPTextureHandle?.Release();
-                    _venuePPTextureHandle = null;
-                    _venuePPTexture.Release();
-                    Destroy(_venuePPTexture);
-                    _venuePPTexture = null;
-                }
+                _previousFrameTexture?.Release();
+                _previousFrameTexture = null;
+                _venuePPTexture?.Release();
+                _venuePPTexture = null;
 
                 if (_noVenueCamera != null)
                 {

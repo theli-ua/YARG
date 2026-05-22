@@ -55,8 +55,7 @@ namespace YARG.Gameplay
         public static int dimmerPropertyID = Shader.PropertyToID("_YargBackgroundAlpha");
 
         private float YARGROUND_OFFSET = 50f;
-        private RenderTexture _backgroundRT;
-        private RTHandle _backgroundRTHandle;
+        private RTHandle _backgroundRT;
 
         // These values are relative to the video, not to song time!
         // A negative start time will delay when the video starts, a positive one will set the video position
@@ -192,19 +191,10 @@ namespace YARG.Gameplay
 
         private void CreateBackgroundRT()
         {
-            if (_backgroundRT != null)
-            {
-                _backgroundRTHandle?.Release();
-                _backgroundRTHandle = null;
-                _backgroundRT.Release();
-            }
+            _backgroundRT?.Release();
 
             var descriptor = new RenderTextureDescriptor(Screen.width, Screen.height, RenderTextureFormat.DefaultHDR, 0, 0);
-            _backgroundRT = new RenderTexture(descriptor);
-            _backgroundRT.filterMode = FilterMode.Bilinear;
-            _backgroundRT.wrapMode = TextureWrapMode.Clamp;
-            _backgroundRT.Create();
-            _backgroundRTHandle = RTHandles.Alloc(_backgroundRT);
+            _backgroundRT = RTHandles.Alloc(descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "BackgroundRT");
         }
 
         private void RoutePrevFrameToBackground()
@@ -213,7 +203,7 @@ namespace YARG.Gameplay
             VenueCameraRenderer.VenueCameraRendererStatics._yargVenuePPPass.material.SetTexture(
                 YargVenuePPPass._previousFrameTextureId, _backgroundRT);
             // Set RenderGraph-bound texture for NoVenueBackgroundPass
-            VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = _backgroundRTHandle;
+            VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = _backgroundRT;
         }
 
         private void RoutePrevFrameToTrails()
@@ -222,7 +212,7 @@ namespace YARG.Gameplay
             VenueCameraRenderer.VenueCameraRendererStatics._yargVenuePPPass.material.SetTexture(
                 YargVenuePPPass._previousFrameTextureId, VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTexture);
             // Set RenderGraph-bound texture for NoVenueBackgroundPass
-            VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTextureHandle;
+            VenueCameraRenderer.VenueCameraRendererStatics._noVenueBackgroundPass.backgroundTexture = VenueCameraRenderer.VenueCameraRendererStatics._previousFrameTexture;
         }
 
         private async UniTask LoadYarground(BackgroundResult result)
@@ -845,13 +835,8 @@ namespace YARG.Gameplay
 
         public void Dispose()
         {
-            if (_backgroundRT != null)
-            {
-                _backgroundRTHandle?.Release();
-                _backgroundRTHandle = null;
-                _backgroundRT.Release();
-                _backgroundRT = null;
-            }
+            _backgroundRT?.Release();
+            _backgroundRT = null;
 
             if (VIDEO_PATH != null)
             {
