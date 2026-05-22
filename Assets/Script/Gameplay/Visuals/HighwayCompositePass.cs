@@ -32,6 +32,7 @@ namespace YARG.Gameplay.Visuals
             using (var builder = renderGraph.AddRasterRenderPass<PassData>("HighwayCompositePass", out var passData, _profilingSampler))
             {
                 builder.AllowPassCulling(false);
+                builder.UseTexture(highwaysColor);
                 passData.highwaysColor = highwaysColor;
                 passData.material = _material;
 

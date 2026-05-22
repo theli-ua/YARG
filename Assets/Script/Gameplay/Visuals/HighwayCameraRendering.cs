@@ -44,11 +44,10 @@ namespace YARG.Gameplay.Visuals
         private Camera _renderCamera;
         private GameManager _gameManager;
 
-        private static RTHandle _highwaysColorTexture;
+        private static RenderTexture _highwaysColorTexture;
         private static RTHandle _highwaysDepthlessColorTexture;
 
         private ScriptableRenderPass _fadeCalcPass;
-        private ScriptableRenderPass _cleanupPass;
         private ScriptableRenderPass _copyPass;
         private bool _allowTextureRecreation = true;
         private bool _needsInitialization = true;
@@ -79,8 +78,6 @@ namespace YARG.Gameplay.Visuals
         public static readonly int YargCurveFactorsID = Shader.PropertyToID("_YargCurveFactors");
         public static readonly int YargFadeParamsID = Shader.PropertyToID("_YargFadeParams");
 
-        public static readonly int YargHighwaysColorTextureID = Shader.PropertyToID("_YargHighwaysColorTexture");
-
         public static RTHandle HighwaysColorTextureHandle => _highwaysDepthlessColorTexture;
 
         // Allocate structured buffers before any scene loads (BeforeSceneLoad).
@@ -105,7 +102,6 @@ namespace YARG.Gameplay.Visuals
             _gameManager = FindAnyObjectByType<GameManager>();
             _renderCamera = GetComponent<Camera>();
             _fadeCalcPass ??= new FadePass(this);
-            _cleanupPass ??= new CleanupPass();
             _copyPass ??= new HighwayCopyPass();
             _horizontalOffsetPx = 0f;
             _scaleMultiplier = 1f;
@@ -141,15 +137,12 @@ namespace YARG.Gameplay.Visuals
             var colorDescriptor = new RenderTextureDescriptor(
                 Screen.width, Screen.height,
                 RenderTextureFormat.DefaultHDR, 16);
-            _highwaysColorTexture = RTHandles.Alloc(colorDescriptor, name: "HighwaysColorTexture");
-            _renderCamera.targetTexture = _highwaysColorTexture.rt;
+            _highwaysColorTexture = new RenderTexture(colorDescriptor);
+            _renderCamera.targetTexture = _highwaysColorTexture;
 
             // I could not figure out how to use combined RenderTexture as source for blit in the RenderGraph pass, so we need a copy without depth
             colorDescriptor.depthBufferBits = 0;
-            _highwaysDepthlessColorTexture = RTHandles.Alloc(colorDescriptor, name: "HighwaysDepthlessColorTexture");
-            // Expose as global shader texture for HighwayCompositePass
-            Shader.SetGlobalTexture(YargHighwaysColorTextureID, _highwaysColorTexture);
-
+            _highwaysDepthlessColorTexture = RTHandles.Alloc(width: Screen.width, height: Screen.height, name: "HighwaysDepthlessColorTexture");
 
         }
 
@@ -486,7 +479,6 @@ namespace YARG.Gameplay.Visuals
             Shader.SetGlobalInteger(YargHighwaysNumberID, _cameras.Count);
             var renderer = _renderCamera.GetUniversalAdditionalCameraData().scriptableRenderer;
             renderer.EnqueuePass(_fadeCalcPass);
-            renderer.EnqueuePass(_cleanupPass);
             renderer.EnqueuePass(_copyPass);
         }
 
@@ -622,10 +614,12 @@ namespace YARG.Gameplay.Visuals
                     };
                     passData.rendererList = renderGraph.CreateRendererList(desc);
                     builder.UseRendererList(passData.rendererList);
+                    builder.AllowGlobalStateModification(true);
 
                     builder.SetRenderFunc<PassData>((PassData data, RasterGraphContext context) =>
                     {
                         context.cmd.DrawRendererList(data.rendererList);
+                        context.cmd.SetGlobalInteger(YargHighwaysNumberID, 0);
                     });
                 }
             }
@@ -655,38 +649,6 @@ namespace YARG.Gameplay.Visuals
                 renderGraph.AddCopyPass(source, target, passName: "Highway Color Copy");
             }
         }
-
-        // Disable highway rendering overrides.
-        // This is necessary because UI is rendered in context of the same camera.
-        // Uses UnsafePass because we only set a global shader integer (CPU-side command),
-        // with no GPU resource access that needs RenderGraph dependency tracking.
-        private sealed class CleanupPass : ScriptableRenderPass
-        {
-            private readonly ProfilingSampler _profilingSampler = new ProfilingSampler("CleanupPass");
-
-            public CleanupPass()
-            {
-                renderPassEvent = RenderPassEvent.AfterRendering;
-            }
-
-            public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
-            {
-                using (var builder = renderGraph.AddUnsafePass<PassData>("CleanupPass", out var passData, _profilingSampler))
-                {
-                    builder.AllowPassCulling(false);
-                    builder.SetRenderFunc<PassData>((PassData data, UnsafeGraphContext context) =>
-                    {
-                        context.cmd.SetGlobalInteger(YargHighwaysNumberID, 0);
-                    });
-                }
-            }
-
-            private class PassData
-            {
-            }
-        }
-
-
 
         // Offset is defined from -1f to 1f
         public static float GetMultiplayerXOffset(int playerIndex, int totalPlayers, float magnitude)
