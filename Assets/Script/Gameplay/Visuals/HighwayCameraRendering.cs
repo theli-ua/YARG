@@ -142,7 +142,7 @@ namespace YARG.Gameplay.Visuals
                 Screen.width, Screen.height,
                 RenderTextureFormat.DefaultHDR, 16);
             _highwaysColorTexture = RTHandles.Alloc(colorDescriptor, name: "HighwaysColorTexture");
-            _renderCamera.targetTexture = _highwaysColorTexture;
+            _renderCamera.targetTexture = _highwaysColorTexture.rt;
 
             // I could not figure out how to use combined RenderTexture as source for blit in the RenderGraph pass, so we need a copy without depth
             colorDescriptor.depthBufferBits = 0;
