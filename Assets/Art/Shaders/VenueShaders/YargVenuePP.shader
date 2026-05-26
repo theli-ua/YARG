@@ -78,7 +78,7 @@ Shader "Hidden/YARG/VenuePP"
         float2 uv = input.texcoord;
 
         // Read post-processed frame via framebuffer fetch
-        half4 fbColor = LOAD_FRAMEBUFFER_X_INPUT(0, uv);
+        half4 fbColor = LOAD_FRAMEBUFFER_X_INPUT(0, input.positionCS.xy);
         half3 col = fbColor.rgb;
 
         // ── Posterize ──
