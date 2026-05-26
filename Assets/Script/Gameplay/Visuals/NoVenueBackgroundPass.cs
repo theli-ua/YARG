@@ -40,12 +40,11 @@ namespace YARG.Gameplay.Visuals
                 builder.AllowPassCulling(false);
                 passData.source = source;
 
-                Vector4 scaleBias = SystemInfo.graphicsUVStartsAtTop
-                    ? new Vector4(1, 1, 0, 0)
-                    : new Vector4(1, -1, 0, 1);
+                Vector4 scaleBias = new Vector4(1, 1, 0, 0);
                 passData.scaleBias = scaleBias;
 
                 builder.SetRenderAttachment(target, 0, AccessFlags.Write);
+                builder.UseTexture(source, AccessFlags.Read);
 
                 builder.SetRenderFunc<PassData>((PassData data, RasterGraphContext context) =>
                 {
