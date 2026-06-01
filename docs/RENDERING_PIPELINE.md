@@ -26,11 +26,10 @@ Both paths use the same `HighwayCompositePass` to alpha-blend highways into the 
 
 ### Venue Camera
 
-- **`VenueCameraRenderer`** — attached to the venue's main camera
+- **`VenueCameraRenderer`** — attached to all venue's cameras
 - Renders directly to backbuffer (`targetTexture = null`)
 - Camera is disabled by default; explicitly enabled only when a venue frame is due
 - `allowDynamicResolution = true` when `renderScale != 1.0` (URP DRS)
-- Per-camera URP antialiasing setting (see [Anti-Aliasing](#anti-aliasing))
 
 ### FPS Capping (Accumulator-Based)
 
@@ -239,8 +238,9 @@ YARG has two quality presets controlled via `GraphicsManager.LowQuality`:
 
 | Setting | Low | High |
 |---------|-----|------|
-| Unity Quality Level | 0 | 1 |
-| MSAA (via Quality Settings / URP Asset) | Disabled | 2x |
+| MSAA (via Quality Settings / URP Asset) | Disabled | 4x |
+| Soft shadows | off | on |
+(incomplete)
 
 ### Bloom / Film Grain
 
