@@ -233,6 +233,19 @@ Fullscreen quad blit of a background texture:
 
 ---
 
+## Quality Settings
+
+YARG has two quality presets controlled via `GraphicsManager.LowQuality`:
+
+| Setting | Low | High |
+|---------|-----|------|
+| Unity Quality Level | 0 | 1 |
+| MSAA (via Quality Settings / URP Asset) | Disabled | 2x |
+
+### Bloom / Film Grain
+
+Controlled via `GraphicsManager.BloomEnabled` / `FilmGrainEnabled`. These toggle components on the URP Volume Profile. They affect **both venue and highways** (shared volume stack). Independent toggles — can disable either without affecting the other.
+
 ## Anti-Aliasing
 
 ### Venue Camera AA Settings
@@ -244,7 +257,7 @@ Configured per-camera in `VenueCameraRenderer.Awake()` from `GraphicsManager.Ins
 | `None` | `AntialiasingMode.None` | Everything |
 | `FXAA` | `AntialiasingMode.FastApproximateAntialiasing` | DRS, everything |
 | `SMAA` | `AntialiasingMode.SubpixelMorphologicalAntiAliasing` | DRS, everything |
-| `TAA` | `AntialiasingMode.TemporalAntiAntiAliasing` | **Not** DRS |
+| `TAA` | `AntialiasingMode.TemporalAntiAliasing` | **Not** DRS, **not** MSAA |
 
 ### TAA Limitations
 
@@ -253,6 +266,8 @@ TAA is incompatible with:
 - **MSAA** — mutually exclusive in URP
 - **Dynamic Resolution Scaling (DRS)** — TAA requires stable resolution
 - **Camera Stacking** — not supported with TAA
+
+When TAA is selected and DRS is disabled (`renderScale == 1.0`), MSAA is automatically disabled on the venue camera (`allowMSAA = false`) to avoid conflict.
 
 ### DRS Interaction
 

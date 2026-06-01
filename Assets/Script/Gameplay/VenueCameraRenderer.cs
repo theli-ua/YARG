@@ -39,7 +39,6 @@ namespace YARG.Gameplay
             // Disable the camera so we can control when it renders
             _renderCamera.enabled = false;
 
-            _renderCamera.allowMSAA = true;
             _renderCamera.targetTexture = null;
             if (renderScale != 1.0)
             {
@@ -50,7 +49,8 @@ namespace YARG.Gameplay
 
             var cameraData = _renderCamera.GetUniversalAdditionalCameraData();
             cameraData.antialiasing = AntialiasingMode.None;
-            switch (GraphicsManager.Instance.VenueAntiAliasing)
+            var aaMethod = GraphicsManager.Instance.VenueAntiAliasing;
+            switch (aaMethod)
             {
                 case VenueAntiAliasingMethod.None:
                     break;
@@ -64,6 +64,9 @@ namespace YARG.Gameplay
                     cameraData.antialiasing = AntialiasingMode.TemporalAntiAliasing;
                     break;
             }
+
+            // TAA and MSAA are mutually exclusive. If TAA selected and DRS is off, disable MSAA.
+            _renderCamera.allowMSAA = aaMethod != VenueAntiAliasingMethod.TAA || renderScale != 1.0;
             UniversalRenderPipelineAsset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
 
             // Initialize static state (passes, textures, shader globals)
