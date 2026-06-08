@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Cinemachine;
 using UnityEngine;
 using YARG.Gameplay;
 using YARG.Helpers;
@@ -57,6 +58,22 @@ namespace YARG.Venue
             if (bgInstance.GetComponentInChildren<CameraManager>() == null)
             {
                 mainCamera.gameObject.AddComponent<VenueCameraRenderer>();
+            }
+
+            OptimizeCinemachineVcams(bgInstance);
+        }
+
+        /// <summary>
+        /// Set StandbyUpdate to Never on all venue virtual cameras.
+        /// Prevents CinemachineCore from evaluating standby vcams each frame (~0.011ms/vcam).
+        /// Live vcam is always updated regardless of this setting.
+        /// </summary>
+        public void OptimizeCinemachineVcams(GameObject venueRoot)
+        {
+            var vcams = venueRoot.GetComponentsInChildren<CinemachineVirtualCamera>(true);
+            foreach (var vcam in vcams)
+            {
+                vcam.m_StandbyUpdate = CinemachineVirtualCameraBase.StandbyUpdateMode.Never;
             }
         }
 
