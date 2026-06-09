@@ -1474,6 +1474,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   FFTSmoothingFactor: 0.8
   WaveSmoothingFactor: 0.5
+  DefaultAlbumCover: {fileID: 2800000, guid: 99b586a3d71a1fe4fa824ca2ae667ba4, type: 3}
 --- !u!114 &318454379
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1531,7 +1532,7 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 1682100931862694993, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 1682100932150968561, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
@@ -1684,7 +1685,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2517693471320601084, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 142.36191
+      value: -157.1503
       objectReference: {fileID: 0}
     - target: {fileID: 2640522790579517911, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1767,7 +1768,7 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5887468963209947489, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 6081917654220247207, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
@@ -1787,7 +1788,7 @@ PrefabInstance:
       value: -157.1503
       objectReference: {fileID: 0}
     - target: {fileID: 6897601373631971078, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 7328250424041952305, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
@@ -1815,7 +1816,7 @@ PrefabInstance:
       value: <mspace=0.538em>99x
       objectReference: {fileID: 0}
     - target: {fileID: 8915388482217552038, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 9151995171417952487, guid: 039fee0ec42345d4f88c0625255415d4, type: 3}
@@ -3055,7 +3056,7 @@ PrefabInstance:
     m_TransformParent: {fileID: 1517088745}
     m_Modifications:
     - target: {fileID: 2412034789861198308, guid: 249f3206655c65946a0f15b17834fca4, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 3967995507941194808, guid: 249f3206655c65946a0f15b17834fca4, type: 3}
@@ -4728,7 +4729,7 @@ PrefabInstance:
     m_TransformParent: {fileID: 1212139298}
     m_Modifications:
     - target: {fileID: 1146569326023523432, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 1896662541191257382, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
@@ -4736,7 +4737,7 @@ PrefabInstance:
       value: -1183493901
       objectReference: {fileID: 0}
     - target: {fileID: 1896662541191257382, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 2006855537152082164, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
@@ -4764,7 +4765,7 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2842466915050512126, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 2933889975780695480, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
@@ -4784,7 +4785,7 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4585064127559478306, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 5322898957872382039, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
@@ -4936,7 +4937,7 @@ PrefabInstance:
       value: -1183493901
       objectReference: {fileID: 0}
     - target: {fileID: 7685424141149583135, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
-      propertyPath: 'm_ActiveFontFeatures.Array.data[0]'
+      propertyPath: m_ActiveFontFeatures.Array.data[0]
       value: 1801810542
       objectReference: {fileID: 0}
     - target: {fileID: 8431678723656029144, guid: f8c143f8514898b4fb85fbadc18550c0, type: 3}
@@ -7770,6 +7771,43 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
+--- !u!84 &1744781364
+RenderTexture:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: 
+  m_ImageContentsHash:
+    serializedVersion: 2
+    Hash: 00000000000000000000000000000000
+  m_IsAlphaChannelOptional: 0
+  serializedVersion: 6
+  m_Width: 2560
+  m_Height: 1440
+  m_AntiAliasing: 1
+  m_MipCount: -1
+  m_DepthStencilFormat: 94
+  m_ColorFormat: 48
+  m_MipMap: 0
+  m_GenerateMips: 1
+  m_SRGB: 0
+  m_UseDynamicScale: 0
+  m_UseDynamicScaleExplicit: 0
+  m_BindMS: 0
+  m_EnableCompatibleFormat: 1
+  m_EnableRandomWrite: 0
+  m_TextureSettings:
+    serializedVersion: 2
+    m_FilterMode: 1
+    m_Aniso: 1
+    m_MipBias: 0
+    m_WrapU: 1
+    m_WrapV: 1
+    m_WrapW: 1
+  m_Dimension: 2
+  m_VolumeDepth: 1
+  m_ShadowSamplingMode: 2
 --- !u!1 &1757985208
 GameObject:
   m_ObjectHideFlags: 0
