@@ -42,6 +42,9 @@ namespace YARG.Venue
         // Double because spots stay on for the duration of the event and then turn off without an off event, so we store time
         private double[]     _spotlightStates;
         private LightState[] _lightStates;
+
+        /// <summary>Whether light states changed this frame. Set by UpdateLightStates, consumed then cleared by NeonLightManager.</summary>
+        public bool LightStatesDirty { get; internal set; }
         public  LightState   GenericLightState => _lightStates[(int) VenueLightLocation.Generic];
 		public  LightState   LeftLightState    => _lightStates[(int) VenueLightLocation.Left];
 		public  LightState   RightLightState   => _lightStates[(int) VenueLightLocation.Right];
@@ -307,6 +310,7 @@ namespace YARG.Venue
 
         private void UpdateLightStates()
         {
+            LightStatesDirty = true;
             for (int i = 0; i < _lightStates.Length; i++)
             {
                 var location = (VenueLightLocation) i;

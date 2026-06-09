@@ -59,6 +59,9 @@ namespace YARG.Helpers.Authoring
             // Do this here instead of in Awake because otherwise the
             // _initialIntensity would be zero for duplicated prefabs.
             _light.intensity = 0f;
+
+            // Start disabled — Play() re-enables when needed
+            this.enabled = false;
         }
 
         private void Update()
@@ -68,12 +71,25 @@ namespace YARG.Helpers.Authoring
             {
                 _light.intensity = GetIntensity() * (_timeRemaining > 0f ? 1f : 0f);
                 _timeRemaining -= Time.deltaTime;
+
+                // Disable when fully done
+                if (_timeRemaining <= 0f && _light.intensity <= 0f)
+                {
+                    this.enabled = false;
+                }
             }
 
             // FadeOut mode
             if (_mode == Mode.FadeOut && _light.intensity > 0f)
             {
                 _light.intensity -= Time.deltaTime * _fadeOutRate;
+
+                // Clamp and disable when faded out
+                if (_light.intensity <= 0f)
+                {
+                    _light.intensity = 0f;
+                    this.enabled = false;
+                }
             }
 
             // Wavy mode
@@ -95,6 +111,9 @@ namespace YARG.Helpers.Authoring
 
         public void Play()
         {
+            // Re-enable if disabled
+            this.enabled = true;
+
             _light.intensity = GetIntensity();
             _timeRemaining = _totalDuration;
             _playing = true;
@@ -102,12 +121,9 @@ namespace YARG.Helpers.Authoring
 
         public void Stop()
         {
-            if (_mode == Mode.Wavy)
-            {
-                _light.intensity = 0f;
-            }
-
+            _light.intensity = 0f;
             _playing = false;
+            this.enabled = false;
         }
 
         private float GetIntensity()

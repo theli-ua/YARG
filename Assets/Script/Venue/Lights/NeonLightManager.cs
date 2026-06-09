@@ -32,6 +32,18 @@ namespace YARG.Venue
 
         private LightManager _lightManager;
 
+        // Cached values to skip redundant Material.SetFloat/SetColor calls
+        private float _lastGenericIntensity;
+        private Color _lastGenericSecondaryColor;
+
+        // Per-location cache for _neonMaterialsFullColor (indexed by VenueLightLocation)
+        private float[] _lastLocationIntensity;
+        private Color[] _lastLocationColor;
+        private bool[]  _hasLocationColor;
+
+        // Per-spot cache for spotlight lerp (indexed by VenueSpotLightLocation)
+        private float[] _lastSpotIntensity;
+
         private void Start()
         {
             _lightManager = FindFirstObjectByType<LightManager>();
@@ -39,106 +51,134 @@ namespace YARG.Venue
 			for (int i = 0; i < _neonMaterialsFullColor.Length; i++) {
 				_neonMaterialsFullColor[i].InitialColor = (_neonMaterialsFullColor[i].Material.GetColor(_emissionColor));
 			}
+
+            // Init caches so first frame always applies
+            _lastGenericIntensity = float.NaN;
+
+            _lastLocationIntensity = new float[System.Enum.GetValues(typeof(VenueLightLocation)).Length];
+            _lastLocationColor = new Color[System.Enum.GetValues(typeof(VenueLightLocation)).Length];
+            _hasLocationColor = new bool[System.Enum.GetValues(typeof(VenueLightLocation)).Length];
+
+            _lastSpotIntensity = new float[System.Enum.GetValues(typeof(VenueSpotLightLocation)).Length];
+            for (int i = 0; i < _lastSpotIntensity.Length; i++)
+                _lastSpotIntensity[i] = float.NaN;
         }
 
         private void Update()
         {
-            // Update all of the materials
-            foreach (var material in _neonMaterials)
-            {
-				var lightState = _lightManager.GenericLightState;
-				material.SetFloat(_emissionMultiplier, lightState.Intensity);
+           // Skip entirely if light states didn't change
+            if (!_lightManager.LightStatesDirty)
+                return;
 
-                if (lightState.Color == null)
-                {
-					material.SetColor(_emissionSecondaryColor, Color.white);
-                }
-                else
-                {
-					material.SetColor(_emissionSecondaryColor, lightState.Color.Value);
-                }
+            _lightManager.LightStatesDirty = false;
+
+            // Update generic neon materials
+            var genericState = _lightManager.GenericLightState;
+            float genericIntensity = genericState.Intensity;
+            Color genericSecondaryColor = genericState.Color ?? Color.white;
+            bool hasGenericSecondary = genericState.Color.HasValue;
+
+            bool intensityChanged = genericIntensity != _lastGenericIntensity;
+            bool secondaryChanged = genericSecondaryColor != _lastGenericSecondaryColor;
+
+            if (intensityChanged)
+            {
+                _lastGenericIntensity = genericIntensity;
+                foreach (var material in _neonMaterials)
+                    material.SetFloat(_emissionMultiplier, genericIntensity);
             }
 
+            if (secondaryChanged)
+            {
+                _lastGenericSecondaryColor = genericSecondaryColor;
+                foreach (var material in _neonMaterials)
+                    material.SetColor(_emissionSecondaryColor, genericSecondaryColor);
+            }
+
+            // Update per-location neon materials
             for (int i = 0; i < _neonMaterialsFullColor.Length; i++)
             {
-				var neon = _neonMaterialsFullColor[i];
+                var neon = _neonMaterialsFullColor[i];
 
-				switch ((neon.Location, neon.SpotLocation))
-				{
-					case (VenueLightLocation.Generic, VenueSpotLightLocation.None):
-						var lightState = _lightManager.GenericLightState;
-						neon.Material.SetColor(_emissionColor, lightState.Color ?? neon.InitialColor);
-						neon.Material.SetFloat(_emissionMultiplier, lightState.Intensity);
-					break;
+                switch ((neon.Location, neon.SpotLocation))
+                {
+                    // --- Standard location cases (cached compare) ---
+                    case (VenueLightLocation.Generic, VenueSpotLightLocation.None):
+                        ApplyLocationState(neon.Material, _lightManager.GenericLightState, neon.InitialColor, (int)neon.Location);
+                        break;
+                    case (VenueLightLocation.Left, VenueSpotLightLocation.None):
+                        ApplyLocationState(neon.Material, _lightManager.LeftLightState, neon.InitialColor, (int)neon.Location);
+                        break;
+                    case (VenueLightLocation.Right, VenueSpotLightLocation.None):
+                        ApplyLocationState(neon.Material, _lightManager.RightLightState, neon.InitialColor, (int)neon.Location);
+                        break;
+                    case (VenueLightLocation.Front, VenueSpotLightLocation.None):
+                        ApplyLocationState(neon.Material, _lightManager.FrontLightState, neon.InitialColor, (int)neon.Location);
+                        break;
+                    case (VenueLightLocation.Back, VenueSpotLightLocation.None):
+                        ApplyLocationState(neon.Material, _lightManager.BackLightState, neon.InitialColor, (int)neon.Location);
+                        break;
+                    case (VenueLightLocation.Center, VenueSpotLightLocation.None):
+                        ApplyLocationState(neon.Material, _lightManager.CenterLightState, neon.InitialColor, (int)neon.Location);
+                        break;
+                    case (VenueLightLocation.Crowd, VenueSpotLightLocation.None):
+                        ApplyLocationState(neon.Material, _lightManager.CrowdLightState, neon.InitialColor, (int)neon.Location);
+                        break;
 
-					case (VenueLightLocation.Left, VenueSpotLightLocation.None):
-						var lightStateLeft = _lightManager.LeftLightState;
-						neon.Material.SetColor(_emissionColor, lightStateLeft.Color ?? neon.InitialColor);
-						neon.Material.SetFloat(_emissionMultiplier, lightStateLeft.Intensity);
-					break;
+                    // --- Spotlight lerp cases (always lerp, compare before SetFloat) ---
+                    case (_, VenueSpotLightLocation.Bass):
+                        ApplySpotLerp(neon.Material, VenueSpotLightLocation.Bass);
+                        break;
+                    case (_, VenueSpotLightLocation.Drums):
+                        ApplySpotLerp(neon.Material, VenueSpotLightLocation.Drums);
+                        break;
+                    case (_, VenueSpotLightLocation.Guitar):
+                        ApplySpotLerp(neon.Material, VenueSpotLightLocation.Guitar);
+                        break;
+                    case (_, VenueSpotLightLocation.Vocals):
+                        ApplySpotLerp(neon.Material, VenueSpotLightLocation.Vocals);
+                        break;
 
-					case (VenueLightLocation.Right, VenueSpotLightLocation.None):
-						var lightStateRight = _lightManager.RightLightState;
-						neon.Material.SetColor(_emissionColor, lightStateRight.Color ?? neon.InitialColor);
-						neon.Material.SetFloat(_emissionMultiplier, lightStateRight.Intensity);
-					break;
+                    default:
+                        YargLogger.LogDebug("Unknown location for neon light");
+                        break;
+                }
+            }
+        }
 
-					case (VenueLightLocation.Front, VenueSpotLightLocation.None):
-						var lightStateFront = _lightManager.FrontLightState;
-						neon.Material.SetColor(_emissionColor, lightStateFront.Color ?? neon.InitialColor);
-						neon.Material.SetFloat(_emissionMultiplier, lightStateFront.Intensity);
-					break;
+        /// <summary>Applies light state to a material, skipping calls if values unchanged.</summary>
+        private void ApplyLocationState(Material material, LightManager.LightState state, Color initialColor, int locationIndex)
+        {
+            float intensity = state.Intensity;
+            Color color = state.Color ?? initialColor;
 
-					case (VenueLightLocation.Back, VenueSpotLightLocation.None):
-						var lightStateBack = _lightManager.BackLightState;
-						neon.Material.SetColor(_emissionColor, lightStateBack.Color ?? neon.InitialColor);
-						neon.Material.SetFloat(_emissionMultiplier, lightStateBack.Intensity);
-					break;
+            if (intensity != _lastLocationIntensity[locationIndex])
+            {
+                _lastLocationIntensity[locationIndex] = intensity;
+                material.SetFloat(_emissionMultiplier, intensity);
+            }
 
-					case (VenueLightLocation.Center, VenueSpotLightLocation.None):
-						var lightStateCenter = _lightManager.CenterLightState;
-						neon.Material.SetColor(_emissionColor, lightStateCenter.Color ?? neon.InitialColor);
-						neon.Material.SetFloat(_emissionMultiplier, lightStateCenter.Intensity);
-					break;
+            if (color != _lastLocationColor[locationIndex] || _hasLocationColor[locationIndex] != state.Color.HasValue)
+            {
+                _lastLocationColor[locationIndex] = color;
+                _hasLocationColor[locationIndex] = state.Color.HasValue;
+                material.SetColor(_emissionColor, color);
+            }
+        }
 
-					case (VenueLightLocation.Crowd, VenueSpotLightLocation.None):
-						var lightStateCrowd = _lightManager.CrowdLightState;
-						neon.Material.SetColor(_emissionColor, lightStateCrowd.Color ?? neon.InitialColor);
-						neon.Material.SetFloat(_emissionMultiplier, lightStateCrowd.Intensity);
-					break;
+        /// <summary>Lerps spotlight intensity, skipping SetFloat if converged.</summary>
+        private void ApplySpotLerp(Material material, VenueSpotLightLocation spotLocation)
+        {
+            bool active = _lightManager.GetSpotlightStateFor(spotLocation);
+            float current = material.GetFloat(_emissionMultiplier);
+            float target = active ? 1f : 0f;
+            float newValue = Mathf.Lerp(current, target, Time.deltaTime * 10f);
 
-					case (_, VenueSpotLightLocation.Bass):
-						var BassIntensity = neon.Material.GetFloat(_emissionMultiplier);
-						var lightStateBass = _lightManager.GetSpotlightStateFor(VenueSpotLightLocation.Bass);
-						float Bass = Mathf.Lerp(BassIntensity, lightStateBass ? 1f : 0f, Time.deltaTime * 10f);
-						neon.Material.SetFloat(_emissionMultiplier, Bass);
-					break;
-
-					case (_, VenueSpotLightLocation.Drums):
-						var DrumsIntensity = neon.Material.GetFloat(_emissionMultiplier);
-						var lightStateDrums = _lightManager.GetSpotlightStateFor(VenueSpotLightLocation.Drums);
-						float Drums = Mathf.Lerp(DrumsIntensity, lightStateDrums ? 1f : 0f, Time.deltaTime * 10f);
-						neon.Material.SetFloat(_emissionMultiplier, Drums);
-					break;
-
-					case (_, VenueSpotLightLocation.Guitar):
-						var GuitarIntensity = neon.Material.GetFloat(_emissionMultiplier);
-						var lightStateGuitar = _lightManager.GetSpotlightStateFor(VenueSpotLightLocation.Guitar);
-						float Guitar = Mathf.Lerp(GuitarIntensity, lightStateGuitar ? 1f : 0f, Time.deltaTime * 10f);
-						neon.Material.SetFloat(_emissionMultiplier, Guitar);
-					break;
-
-					case (_, VenueSpotLightLocation.Vocals):
-						var VocalsIntensity = neon.Material.GetFloat(_emissionMultiplier);
-						var lightStateVocals = _lightManager.GetSpotlightStateFor(VenueSpotLightLocation.Vocals);
-						float Vocals = Mathf.Lerp(VocalsIntensity, lightStateVocals ? 1f : 0f, Time.deltaTime * 10f);
-						neon.Material.SetFloat(_emissionMultiplier, Vocals);
-					break;
-
-					default:
-						YargLogger.LogDebug("Unknown location for neon light");
-					break;
-				}
+            int idx = (int)spotLocation;
+            if (newValue != _lastSpotIntensity[idx])
+            {
+                _lastSpotIntensity[idx] = newValue;
+                material.SetFloat(_emissionMultiplier, newValue);
             }
         }
     }
