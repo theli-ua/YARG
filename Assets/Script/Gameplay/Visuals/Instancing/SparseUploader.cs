@@ -9,150 +9,93 @@ using UnityEngine.Rendering;
 namespace YARG.Gameplay.Visuals.Instancing
 {
     /// <summary>
-    /// Column-major 3x4 matrix (12 floats, 48 bytes).
-    /// Used for packed matrix uploads to GPU.
+    /// Uploads data into a GPU GraphicsBuffer.
+    /// Uses compute shader when available for efficient scattered writes.
+    /// Falls back to direct GraphicsBuffer.SetData when shader is unavailable.
     /// </summary>
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct float3x4
-    {
-        public float c0x, c0y, c0z;
-        public float c1x, c1y, c1z;
-        public float c2x, c2y, c2z;
-        public float c3x, c3y, c3z;
-    }
-
-    internal enum OperationType : int
-    {
-        Upload = 0,
-        Matrix_4x4 = 1,
-        Matrix_Inverse_4x4 = 2,
-        Matrix_3x4 = 3,
-        Matrix_Inverse_3x4 = 4,
-        StridedUpload = 5,
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct Operation
-    {
-        public uint type;
-        public uint srcOffset;
-        public uint srcStride;
-        public uint dstOffset;
-        public uint dstOffsetExtra;
-        public int dstStride;
-        public uint size;
-        public uint count;
-    }
-
-    /// <summary>
-    /// Provides utility methods that you can use to upload data into GPU memory.
-    /// </summary>
-    /// <remarks>
-    /// Phase 1: single-buffer synchronous mode. Add operations via AddUpload/AddMatrixUpload,
-    /// then call Commit() to dispatch all pending uploads at once.
-    /// </remarks>
     public unsafe class SparseUploader : IDisposable
     {
-        const int k_MaxThreadGroupsPerDispatch = 65535;
-
-        private int m_BufferChunkSize;
         private GraphicsBuffer m_DestinationBuffer;
+        private bool m_ShaderAvailable;
 
-        private readonly List<GraphicsBuffer> m_UploadBuffers;
-        private readonly List<byte[]> m_BufferData;
-        private readonly List<long> m_BufferMarkers;
-        private readonly List<int> m_BufferOperationCount;
+        // Compute shader path
+        private ComputeShader m_Shader;
+        private int m_CopyKernelIndex;
 
+        // Staging for compute shader uploads
+        private int m_BufferChunkSize;
         private int m_OperationCount;
         private int m_OperationCapacity;
         private Operation* m_Operations;
-
         private byte* m_DataBase;
         private long m_DataWriteOffset;
-
-        private ComputeShader m_SparseUploaderShader;
-        private int m_CopyKernelIndex;
-        private int m_ReplaceKernelIndex;
 
         private readonly int m_SrcBufferID;
         private readonly int m_DstBufferID;
         private readonly int m_OperationsBaseID;
-        private readonly int m_ReplaceOperationSize;
 
-        private long m_CurrentFrameUploadSize;
-        private long m_MaxUploadSize;
+        private bool m_Disposed;
 
         /// <summary>
         /// Constructs a new sparse uploader with the specified buffer as the target.
         /// </summary>
-        /// <param name="destinationBuffer">The target buffer to write uploads into.</param>
-        /// <param name="bufferChunkSize">The upload buffer chunk size.</param>
         public SparseUploader(GraphicsBuffer destinationBuffer, int bufferChunkSize = 256 * 1024)
         {
-            m_BufferChunkSize = bufferChunkSize;
             m_DestinationBuffer = destinationBuffer;
+            m_BufferChunkSize = bufferChunkSize;
+            m_ShaderAvailable = false;
 
-            m_UploadBuffers = new List<GraphicsBuffer>();
-            m_BufferData = new List<byte[]>();
-            m_BufferMarkers = new List<long>();
-            m_BufferOperationCount = new List<int>();
-
-            m_OperationCapacity = 4096;
-            m_Operations = (Operation*)UnsafeUtility.Malloc(m_OperationCapacity * UnsafeUtility.SizeOf<Operation>(), 8, Allocator.Persistent);
-            m_OperationCount = 0;
-
-            var dataBufferSize = bufferChunkSize;
-            m_DataBase = (byte*)UnsafeUtility.Malloc(dataBufferSize, 64, Allocator.Persistent);
-            m_DataWriteOffset = dataBufferSize;
-
-            m_SparseUploaderShader = Resources.Load<ComputeShader>("SparseUploader");
-            if (m_SparseUploaderShader == null)
+            // Try to load compute shader
+            var shader = Resources.Load<ComputeShader>("SparseUploader");
+            if (shader != null)
             {
-                Debug.LogWarning("[SparseUploader] SparseUploader compute shader not found in Resources. Uploads will be no-ops.");
-            }
-            else
-            {
-                m_CopyKernelIndex = m_SparseUploaderShader.FindKernel("CopyKernel");
-                m_ReplaceKernelIndex = m_SparseUploaderShader.FindKernel("ReplaceKernel");
+                try
+                {
+                    int copyKernel = shader.FindKernel("CopyKernel");
+                    if (copyKernel >= 0)
+                    {
+                        m_Shader = shader;
+                        m_CopyKernelIndex = copyKernel;
+                        m_ShaderAvailable = true;
+
+                        m_OperationCapacity = 4096;
+                        m_Operations = (Operation*)UnsafeUtility.Malloc(
+                            m_OperationCapacity * UnsafeUtility.SizeOf<Operation>(), 8, Allocator.Persistent);
+                        m_OperationCount = 0;
+
+                        m_DataBase = (byte*)UnsafeUtility.Malloc(bufferChunkSize, 64, Allocator.Persistent);
+                        m_DataWriteOffset = bufferChunkSize;
+
+                        m_SrcBufferID = Shader.PropertyToID("srcBuffer");
+                        m_DstBufferID = Shader.PropertyToID("dstBuffer");
+                        m_OperationsBaseID = Shader.PropertyToID("operationsBase");
+
+                        Debug.Log("[SparseUploader] Compute shader loaded successfully.");
+                        return;
+                    }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[SparseUploader] Failed to initialize compute shader: {e.Message}");
+                }
             }
 
-            m_SrcBufferID = Shader.PropertyToID("srcBuffer");
-            m_DstBufferID = Shader.PropertyToID("dstBuffer");
-            m_OperationsBaseID = Shader.PropertyToID("operationsBase");
-            m_ReplaceOperationSize = Shader.PropertyToID("replaceOperationSize");
-
-            m_CurrentFrameUploadSize = 0;
-            m_MaxUploadSize = 0;
+            // Fallback to direct uploads
+            Debug.LogWarning("[SparseUploader] Compute shader unavailable. Using direct upload fallback.");
+            m_ShaderAvailable = false;
         }
 
         /// <inheritdoc/>
         public void Dispose()
         {
-            UnsafeUtility.Free(m_Operations, Allocator.Persistent);
-            UnsafeUtility.Free(m_DataBase, Allocator.Persistent);
+            if (m_Disposed) return;
+            m_Disposed = true;
 
-            for (int i = 0; i < m_UploadBuffers.Count; ++i)
+            if (m_ShaderAvailable)
             {
-                if (m_UploadBuffers[i] != null && m_UploadBuffers[i].IsValid())
-                    m_UploadBuffers[i].Dispose();
+                UnsafeUtility.Free(m_Operations, Allocator.Persistent);
+                UnsafeUtility.Free(m_DataBase, Allocator.Persistent);
             }
-        }
-
-        /// <summary>
-        /// Replaces the destination GPU buffer with a new one.
-        /// </summary>
-        public void ReplaceBuffer(GraphicsBuffer buffer, bool copyFromPrevious = false)
-        {
-            if (copyFromPrevious && m_DestinationBuffer != null && m_SparseUploaderShader != null)
-            {
-                var srcSize = m_DestinationBuffer.count * m_DestinationBuffer.stride;
-                m_SparseUploaderShader.SetBuffer(m_ReplaceKernelIndex, m_SrcBufferID, m_DestinationBuffer);
-                m_SparseUploaderShader.SetBuffer(m_ReplaceKernelIndex, m_DstBufferID, buffer);
-                m_SparseUploaderShader.SetInt(m_ReplaceOperationSize, (int)srcSize);
-                m_SparseUploaderShader.Dispatch(m_ReplaceKernelIndex, 1, 1, 1);
-            }
-
-            m_DestinationBuffer = buffer;
         }
 
         /// <summary>
@@ -160,29 +103,16 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void AddUpload(void* src, int size, int offsetInBytes, int repeatCount = 1)
         {
-            if (m_SparseUploaderShader == null) return;
-
             if (repeatCount <= 0) repeatCount = 1;
 
-            EnsureOperationsSpace(1);
-            EnsureDataSpace(size);
-
-            int dataOffset = (int)(m_DataBase + m_BufferChunkSize - m_DataWriteOffset - size);
-            UnsafeUtility.MemCpy(m_DataBase + dataOffset, src, size);
-
-            var op = new Operation
+            if (m_ShaderAvailable)
             {
-                type = (uint)OperationType.Upload,
-                srcOffset = (uint)dataOffset,
-                dstOffset = (uint)offsetInBytes,
-                dstOffsetExtra = 0,
-                size = (uint)size,
-                count = (uint)repeatCount
-            };
-
-            UnsafeUtility.MemCpy(m_Operations + m_OperationCount, &op, UnsafeUtility.SizeOf<Operation>());
-            m_OperationCount++;
-            m_CurrentFrameUploadSize += size * repeatCount;
+                AddUploadCompute(src, size, offsetInBytes, repeatCount);
+            }
+            else
+            {
+                AddUploadDirect(src, size, offsetInBytes, repeatCount);
+            }
         }
 
         /// <summary>
@@ -204,131 +134,59 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         /// <summary>
-        /// Options for matrix upload type.
-        /// </summary>
-        public enum MatrixType
-        {
-            MatrixType4x4,
-            MatrixType3x4,
-        }
-
-        /// <summary>
-        /// Adds a pending matrix upload operation.
-        /// </summary>
-        public void AddMatrixUpload(void* src, int numMatrices, int offset, MatrixType srcType, MatrixType dstType)
-        {
-            AddMatrixHelper(src, numMatrices, offset, -1, srcType, dstType);
-        }
-
-        /// <summary>
-        /// Adds a pending matrix upload with inverse computation.
-        /// </summary>
-        public void AddMatrixUploadAndInverse(void* src, int numMatrices, int offset, int offsetInverse, MatrixType srcType, MatrixType dstType)
-        {
-            AddMatrixHelper(src, numMatrices, offset, offsetInverse, srcType, dstType);
-        }
-
-        private void AddMatrixHelper(void* src, int numMatrices, int offset, int offsetInverse, MatrixType srcType, MatrixType dstType)
-        {
-            if (m_SparseUploaderShader == null) return;
-
-            var size = numMatrices * sizeof(float3x4);
-            EnsureOperationsSpace(1);
-            EnsureDataSpace(size);
-
-            int dataOffset = (int)(m_DataBase + m_BufferChunkSize - m_DataWriteOffset - size);
-
-            if (srcType == MatrixType.MatrixType4x4)
-            {
-                var srcLocal = (byte*)src;
-                var dstLocal = m_DataBase + dataOffset;
-                for (int i = 0; i < numMatrices; ++i)
-                {
-                    for (int j = 0; j < 4; ++j)
-                    {
-                        UnsafeUtility.MemCpy(dstLocal, srcLocal, 12);
-                        dstLocal += 12;
-                        srcLocal += 16;
-                    }
-                }
-            }
-            else
-            {
-                UnsafeUtility.MemCpy(m_DataBase + dataOffset, src, size);
-            }
-
-            uint uploadType = (offsetInverse == -1) ? (uint)OperationType.Matrix_4x4 : (uint)OperationType.Matrix_Inverse_4x4;
-            uploadType += (dstType == MatrixType.MatrixType3x4) ? 2u : 0u;
-
-            var op = new Operation
-            {
-                type = uploadType,
-                srcOffset = (uint)dataOffset,
-                dstOffset = (uint)offset,
-                dstOffsetExtra = (uint)offsetInverse,
-                size = (uint)size,
-                count = 1,
-            };
-
-            UnsafeUtility.MemCpy(m_Operations + m_OperationCount, &op, UnsafeUtility.SizeOf<Operation>());
-            m_OperationCount++;
-            m_CurrentFrameUploadSize += size;
-        }
-
-        /// <summary>
-        /// Adds a strided upload operation.
-        /// </summary>
-        public void AddStridedUpload(void* src, uint elemSize, uint srcStride, uint count, uint dstOffset, int dstStride)
-        {
-            if (m_SparseUploaderShader == null) return;
-
-            uint dataSize = count * srcStride;
-            EnsureOperationsSpace(1);
-            EnsureDataSpace((int)dataSize);
-
-            int dataOffset = (int)(m_DataBase + m_BufferChunkSize - m_DataWriteOffset - (int)dataSize);
-            UnsafeUtility.MemCpy(m_DataBase + dataOffset, src, dataSize);
-
-            var op = new Operation
-            {
-                type = (uint)OperationType.StridedUpload,
-                srcOffset = (uint)dataOffset,
-                srcStride = srcStride,
-                dstOffset = (uint)dstOffset,
-                dstOffsetExtra = 0,
-                dstStride = dstStride,
-                size = elemSize,
-                count = count,
-            };
-
-            UnsafeUtility.MemCpy(m_Operations + m_OperationCount, &op, UnsafeUtility.SizeOf<Operation>());
-            m_OperationCount++;
-            m_CurrentFrameUploadSize += (long)dataSize;
-        }
-
-        /// <summary>
         /// Commits all pending upload operations to the GPU.
         /// </summary>
         public void Commit()
         {
-            if (m_SparseUploaderShader == null || m_DestinationBuffer == null)
-            {
-                ResetFrame();
-                return;
-            }
+            if (m_DestinationBuffer == null || m_Disposed) return;
 
+            if (m_ShaderAvailable)
+            {
+                CommitCompute();
+            }
+            else
+            {
+                CommitDirect();
+            }
+        }
+
+        #region Compute Shader Path
+
+        private void AddUploadCompute(void* src, int size, int offsetInBytes, int repeatCount)
+        {
+            EnsureOperationsSpace(1);
+            EnsureDataSpace(size);
+
+            int dataOffset = (int)(m_DataBase + m_BufferChunkSize - m_DataWriteOffset - size);
+            UnsafeUtility.MemCpy(m_DataBase + dataOffset, src, size);
+
+            var op = new Operation
+            {
+                type = 0, // Upload
+                srcOffset = (uint)dataOffset,
+                dstOffset = (uint)offsetInBytes,
+                size = (uint)size,
+                count = (uint)repeatCount
+            };
+
+            UnsafeUtility.MemCpy(m_Operations + m_OperationCount, &op, UnsafeUtility.SizeOf<Operation>());
+            m_OperationCount++;
+        }
+
+        private void CommitCompute()
+        {
             if (m_OperationCount == 0)
             {
-                ResetFrame();
+                ResetComputeFrame();
                 return;
             }
 
+            const int k_MaxThreadGroups = 65535;
             int operationSize = UnsafeUtility.SizeOf<Operation>();
             int totalOpSize = m_OperationCount * operationSize;
             int bufferSize = m_BufferChunkSize;
 
             var uploadBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Raw, bufferSize / 4, 4);
-            uploadBuffer.name = "SparseUploaderUploadBuffer";
 
             var bufferData = uploadBuffer.LockBufferForWrite<byte>(0, bufferSize);
             byte* bufferPtr = (byte*)bufferData.GetUnsafePtr();
@@ -347,33 +205,25 @@ namespace YARG.Gameplay.Visuals.Instancing
             uploadBuffer.UnlockBufferAfterWrite<byte>(bufferSize);
 
             int numOps = m_OperationCount;
-            for (int iOp = 0; iOp < numOps; iOp += k_MaxThreadGroupsPerDispatch)
+            for (int iOp = 0; iOp < numOps; iOp += k_MaxThreadGroups)
             {
-                int opsBegin = iOp;
-                int opsEnd = Mathf.Min(opsBegin + k_MaxThreadGroupsPerDispatch, numOps);
-                int numThreadGroups = opsEnd - opsBegin;
+                int opsEnd = Mathf.Min(iOp + k_MaxThreadGroups, numOps);
+                int numThreadGroups = opsEnd - iOp;
 
-                m_SparseUploaderShader.SetBuffer(m_CopyKernelIndex, m_SrcBufferID, uploadBuffer);
-                m_SparseUploaderShader.SetBuffer(m_CopyKernelIndex, m_DstBufferID, m_DestinationBuffer);
-                m_SparseUploaderShader.SetInt(m_OperationsBaseID, opsBegin);
-
-                m_SparseUploaderShader.Dispatch(m_CopyKernelIndex, numThreadGroups, 1, 1);
+                m_Shader.SetBuffer(m_CopyKernelIndex, m_SrcBufferID, uploadBuffer);
+                m_Shader.SetBuffer(m_CopyKernelIndex, m_DstBufferID, m_DestinationBuffer);
+                m_Shader.SetInt(m_OperationsBaseID, iOp);
+                m_Shader.Dispatch(m_CopyKernelIndex, numThreadGroups, 1, 1);
             }
 
             uploadBuffer.Dispose();
-            ResetFrame();
+            ResetComputeFrame();
         }
 
-        /// <summary>
-        /// Calculates statistics about the current and previous frame uploads.
-        /// </summary>
-        public SparseUploaderStats ComputeStats()
+        private void ResetComputeFrame()
         {
-            var stats = default(SparseUploaderStats);
-            stats.BytesGPUMemoryUsed = m_BufferChunkSize;
-            stats.BytesGPUMemoryUploadedCurr = m_CurrentFrameUploadSize;
-            stats.BytesGPUMemoryUploadedMax = m_MaxUploadSize;
-            return stats;
+            m_OperationCount = 0;
+            m_DataWriteOffset = m_BufferChunkSize;
         }
 
         private void EnsureOperationsSpace(int count)
@@ -381,7 +231,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (m_OperationCount + count > m_OperationCapacity)
             {
                 int newCapacity = Mathf.Max(m_OperationCapacity * 2, m_OperationCount + count);
-                var newOps = (Operation*)UnsafeUtility.Malloc(newCapacity * UnsafeUtility.SizeOf<Operation>(), 8, Allocator.Persistent);
+                var newOps = (Operation*)UnsafeUtility.Malloc(
+                    newCapacity * UnsafeUtility.SizeOf<Operation>(), 8, Allocator.Persistent);
                 UnsafeUtility.MemCpy(newOps, m_Operations, m_OperationCount * UnsafeUtility.SizeOf<Operation>());
                 UnsafeUtility.Free(m_Operations, Allocator.Persistent);
                 m_Operations = newOps;
@@ -398,9 +249,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 byte* newData = (byte*)UnsafeUtility.Malloc(newSize, 64, Allocator.Persistent);
                 int usedDataSize = oldSize - (int)m_DataWriteOffset;
                 if (usedDataSize > 0)
-                {
                     UnsafeUtility.MemCpy(newData + newSize - usedDataSize, m_DataBase + oldSize - usedDataSize, usedDataSize);
-                }
                 m_DataWriteOffset = newSize - usedDataSize;
                 UnsafeUtility.Free(m_DataBase, Allocator.Persistent);
                 m_DataBase = newData;
@@ -408,23 +257,45 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
         }
 
-        private void ResetFrame()
-        {
-            m_OperationCount = 0;
-            m_DataWriteOffset = m_BufferChunkSize;
-            if (m_CurrentFrameUploadSize > m_MaxUploadSize)
-                m_MaxUploadSize = m_CurrentFrameUploadSize;
-            m_CurrentFrameUploadSize = 0;
-        }
-    }
+        #endregion
 
-    /// <summary>
-    /// Represents SparseUploader statistics.
-    /// </summary>
-    public struct SparseUploaderStats
-    {
-        public long BytesGPUMemoryUsed;
-        public long BytesGPUMemoryUploadedCurr;
-        public long BytesGPUMemoryUploadedMax;
+        #region Direct Upload Fallback
+
+        private void AddUploadDirect(void* src, int size, int offsetInBytes, int repeatCount)
+        {
+            // For direct uploads, stage data in a temp NativeArray and use SetData
+            for (int r = 0; r < repeatCount; r++)
+            {
+                int destOffset = offsetInBytes + r * size;
+                int elementOffset = destOffset / 4; // GraphicsBuffer is in ints
+                int elemCount = (size + 3) / 4; // Round up to int boundary
+
+                var temp = new NativeArray<int>(elemCount, Allocator.Temp);
+                UnsafeUtility.MemCpy(temp.GetUnsafePtr(), src, size);
+                m_DestinationBuffer.SetData(temp, 0, elementOffset, elemCount);
+                temp.Dispose();
+            }
+        }
+
+        private void CommitDirect()
+        {
+            // Direct uploads are applied immediately in AddUploadDirect, nothing to commit
+        }
+
+        #endregion
+
+        // Operation struct matching the compute shader
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Operation
+        {
+            public uint type;
+            public uint srcOffset;
+            public uint srcStride;
+            public uint dstOffset;
+            public uint dstOffsetExtra;
+            public int dstStride;
+            public uint size;
+            public uint count;
+        }
     }
 }
