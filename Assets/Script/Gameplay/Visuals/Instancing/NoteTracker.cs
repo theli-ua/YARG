@@ -15,7 +15,7 @@ namespace YARG.Gameplay.Visuals.Instancing
     /// Manages flat arrays of note data, spawn data, and batch assignments.
     /// Implements INoteTracker for integration with HighwayElementGraphicsSystem.
     /// </summary>
-    internal class NoteTracker : INoteTracker, IDisposable
+    public class NoteTracker : INoteTracker, IDisposable
     {
         // CPU-side data — flat arrays, one entry per spawned note
         private NativeArray<NoteData> _notes;
@@ -155,14 +155,14 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void RemoveExpired()
         {
-            float visualTime = (float)GameManager.VisualTime;
-            float noteSpeed = _trackPlayer?.Player.NoteSpeed ?? 1f;
+            float visualTime = (float)(UnityEngine.Object.FindAnyObjectByType<GameManager>()?.VisualTime ?? 0);
+            float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
 
             int writeIndex = 0;
             for (int i = 0; i < _activeCount; i++)
             {
                 float z = TrackPlayer.STRIKE_LINE_POS + (_spawnData[i].noteHitTime - visualTime) * noteSpeed;
-                if (z >= TrackElement.REMOVE_POINT)
+                if (z >= -4f)
                 {
                     // Keep this note — compact forward
                     if (writeIndex != i)
@@ -208,8 +208,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var data = _notes[i];
 
                 // Compute Z position
-                float visualTime = (float)GameManager.VisualTime;
-                float noteSpeed = _trackPlayer?.Player.NoteSpeed ?? 1f;
+                float visualTime = (float)(UnityEngine.Object.FindAnyObjectByType<GameManager>()?.VisualTime ?? 0);
+                float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
                 float z = TrackPlayer.STRIKE_LINE_POS + (spawn.noteHitTime - visualTime) * noteSpeed;
 
                 // Build note element local matrix: T(baseX, 0, z) * S(scale)
@@ -252,13 +252,13 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             _activeCount = 0;
             _noteToIndex.Clear();
-            Array.Clear(_noteObjects);
-            Array.Clear(_coloredBatches);
-            Array.Clear(_noStarPowerBatches);
-            Array.Clear(_metalBatches);
-            Array.Clear(_coloredLocalIndices);
-            Array.Clear(_noStarPowerLocalIndices);
-            Array.Clear(_metalLocalIndices);
+            Array.Clear(_noteObjects, 0, _noteObjects.Length);
+            Array.Clear(_coloredBatches, 0, _coloredBatches.Length);
+            Array.Clear(_noStarPowerBatches, 0, _noStarPowerBatches.Length);
+            Array.Clear(_metalBatches, 0, _metalBatches.Length);
+            Array.Clear(_coloredLocalIndices, 0, _coloredLocalIndices.Length);
+            Array.Clear(_noStarPowerLocalIndices, 0, _noStarPowerLocalIndices.Length);
+            Array.Clear(_metalLocalIndices, 0, _metalLocalIndices.Length);
 
             // Reset batch active counts
             // (batches are shared across trackers — don't reset them here)
@@ -326,7 +326,9 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             int index = GetIndex(note);
             if (index < 0) return;
-            _notes[index].color = color;
+            var noteData = _notes[index];
+            noteData.color = color;
+            _notes[index] = noteData;
         }
     }
 }

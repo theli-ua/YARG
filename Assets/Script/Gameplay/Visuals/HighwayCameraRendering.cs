@@ -8,6 +8,7 @@ using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.SceneManagement;
 using YARG.Core.Logging;
 using YARG.Gameplay.Player;
+using YARG.Gameplay.Visuals.Instancing;
 using YARG.Helpers.UI;
 using YARG.Settings;
 using UnityEngine.Rendering.RenderGraphModule.Util;
@@ -65,6 +66,12 @@ namespace YARG.Gameplay.Visuals
         private readonly Matrix4x4[] _camMatrices = new Matrix4x4[MAX_MATRICES * 3];
         private readonly float[] _laneScales = new float[MAX_MATRICES];
 
+        // HighwayElementGraphicsSystem integration
+        private HighwayElementGraphicsSystem _graphicsSystem;
+
+        /// <summary>Debug toggle: when false (production), GameObject note heads are not spawned.</summary>
+        public bool dualRenderMode { get; set; } = false;
+
         // Persistent structured buffers — allocated once, never disposed (~6.4KB GPU, single instance)
         private static ComputeBuffer s_cameraMatrixBuffer; // 32 × 3 Matrix4x4 (interleaved: view, invView, proj)
         private static ComputeBuffer s_curveFactorBuffer;  // 32 floats
@@ -116,6 +123,10 @@ namespace YARG.Gameplay.Visuals
 
             RenderPipelineManager.beginCameraRendering += OnPreCameraRender;
             SceneManager.sceneUnloaded += OnSceneUnloaded;
+
+            // HighwayElementGraphicsSystem integration
+            _graphicsSystem = new HighwayElementGraphicsSystem();
+            _graphicsSystem.OnCreate();
         }
 
         private void ResetCameras()
@@ -352,6 +363,18 @@ namespace YARG.Gameplay.Visuals
             AddPlayerParams(trackPlayer.transform.position, trackPlayer.TrackCamera, trackPlayer.Player.CameraPreset.CurveFactor, trackPlayer.ZeroFadePosition, trackPlayer.FadeSize, trackPlayer.Player.CameraPreset.Rotation);
         }
 
+        internal void RegisterNoteTracker(INoteTracker tracker)
+        {
+            _graphicsSystem?.RegisterNoteTracker(tracker);
+        }
+
+        internal void UnregisterNoteTracker(INoteTracker tracker)
+        {
+            _graphicsSystem?.UnregisterNoteTracker(tracker);
+        }
+
+        internal HighwayElementGraphicsSystem GraphicsSystem => _graphicsSystem;
+
         public void AddVocalTrack(VocalTrack vocalTrack, int highwayIndex)
         {
             var camera = vocalTrack.GetTrackCamera();
@@ -412,6 +435,12 @@ namespace YARG.Gameplay.Visuals
 
         private void OnDisable()
         {
+            if (_graphicsSystem != null)
+            {
+                _graphicsSystem.Dispose();
+                _graphicsSystem = null;
+            }
+
             RenderPipelineManager.beginCameraRendering -= OnPreCameraRender;
             SceneManager.sceneUnloaded -= OnSceneUnloaded;
 

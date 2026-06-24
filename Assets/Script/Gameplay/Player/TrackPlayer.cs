@@ -11,6 +11,7 @@ using YARG.Core.Engine;
 using YARG.Core.Logging;
 using YARG.Gameplay.HUD;
 using YARG.Gameplay.Visuals;
+using YARG.Gameplay.Visuals.Instancing;
 using YARG.Helpers;
 using YARG.Playback;
 using YARG.Player;
@@ -53,6 +54,9 @@ namespace YARG.Gameplay.Player
         protected IndicatorStripes IndicatorStripes;
         [SerializeField]
         protected HitWindowDisplay HitWindowDisplay;
+
+        // Instanced rendering tracker
+        protected NoteTracker NoteTracker;
 
         [SerializeField]
         private Transform _hudLocation;
@@ -149,6 +153,8 @@ namespace YARG.Gameplay.Player
             BeatlinePool.ReturnAllObjects();
 
             HitWindowDisplay.SetHitWindowSize();
+
+            NoteTracker?.Reset();
         }
     }
 
@@ -259,6 +265,15 @@ namespace YARG.Gameplay.Player
 
             FinishInitialization();
 
+            // Initialize NoteTracker for instanced rendering
+            NoteTracker = new NoteTracker(
+                NotePool.ObjectCap,
+                Player.ThemePreset.Name,
+                HighwayIndex,
+                HighwayCameraRendering.GraphicsSystem,
+                this);
+            HighwayCameraRendering.RegisterNoteTracker(NoteTracker);
+
             SongLength = (float) chart.GetEndTime();
 
             _autoCalibrator = new AutoCalibrator(GameManager);
@@ -271,6 +286,14 @@ namespace YARG.Gameplay.Player
             GameManager.BeatEventHandler.Visual.Unsubscribe(SunburstEffects.PulseSunburst);
 
             _autoCalibrator?.Dispose();
+
+            // Cleanup NoteTracker for instanced rendering
+            if (NoteTracker != null)
+            {
+                HighwayCameraRendering.UnregisterNoteTracker(NoteTracker);
+                NoteTracker.Dispose();
+                NoteTracker = null;
+            }
 
             base.FinishDestruction();
         }
@@ -976,6 +999,17 @@ namespace YARG.Gameplay.Player
 
         protected void SpawnNote(TNote note)
         {
+            // BRG instanced path — always active
+            if (NoteTracker != null)
+            {
+                var noteData = CreateNoteData(note);
+                var spawnData = CreateNoteSpawnData(note);
+                NoteTracker.Add(noteData, spawnData, note);
+            }
+
+            // GameObject path — only in dual render mode
+            if (!HighwayCameraRendering.dualRenderMode) return;
+
             var poolable = NotePool.KeyedTakeWithoutEnabling(note);
             if (poolable == null)
             {
@@ -985,6 +1019,18 @@ namespace YARG.Gameplay.Player
 
             InitializeSpawnedNote(poolable, note);
             poolable.EnableFromPool();
+        }
+
+        /// <summary>Creates NoteData for a spawned note. Override in instrument-specific players.</summary>
+        protected virtual NoteData CreateNoteData(TNote note)
+        {
+            return default;
+        }
+
+        /// <summary>Creates NoteSpawnData for a spawned note. Override in instrument-specific players.</summary>
+        protected virtual NoteSpawnData CreateNoteSpawnData(TNote note)
+        {
+            return default;
         }
 
         protected abstract void InitializeSpawnedNote(IPoolable poolable, TNote note);
@@ -1128,6 +1174,19 @@ namespace YARG.Gameplay.Player
         public override void GameplayUpdate()
         {
             base.GameplayUpdate();
+
+            if (NoteTracker != null)
+            {
+                NoteTracker.UpdatePositions();
+                NoteTracker.RemoveExpired();
+                NoteTracker.UpdateBatchAssignments();
+
+                // Upload to GPU — use track's localToWorld matrix
+                if (TrackCamera != null)
+                {
+                    NoteTracker.UploadToGPU(transform.localToWorldMatrix);
+                }
+            }
 
             if (LastHighScore != null && !_newHighScoreShown && Score > LastHighScore)
             {

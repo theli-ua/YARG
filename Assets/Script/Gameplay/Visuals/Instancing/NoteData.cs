@@ -10,7 +10,7 @@ namespace YARG.Gameplay.Visuals.Instancing
     /// Stored in a StructOfArrays layout alongside NoteSpawnData for GPU instancing.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
-    internal struct NoteData
+    public struct NoteData
     {
         /// <summary>SP/miss-aware color for ColoredMaterials (WITHOUT EmissionAddition — shader adds it).</summary>
         public Vector4 color;
@@ -81,7 +81,7 @@ namespace YARG.Gameplay.Visuals.Instancing
     /// Stored in a StructOfArrays layout alongside NoteData for GPU instancing.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
-    internal struct NoteSpawnData
+    public struct NoteSpawnData
     {
         /// <summary>Chart note's hit time (used for Z position).</summary>
         public float noteHitTime;

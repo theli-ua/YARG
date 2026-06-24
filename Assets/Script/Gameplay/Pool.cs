@@ -33,6 +33,8 @@ namespace YARG.Gameplay
 
         public IReadOnlyList<IPoolable> AllSpawned => _spawnedObjects;
 
+        public int ObjectCap => _objectCap;
+
         protected virtual void Awake()
         {
             PrewarmTo(_prewarmAmount);
