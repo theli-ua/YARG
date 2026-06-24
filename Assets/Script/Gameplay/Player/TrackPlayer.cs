@@ -266,13 +266,17 @@ namespace YARG.Gameplay.Player
             FinishInitialization();
 
             // Initialize NoteTracker for instanced rendering
-            NoteTracker = new NoteTracker(
-                NotePool.ObjectCap,
-                Player.ThemePreset.Name,
-                HighwayIndex,
-                HighwayCameraRendering.GraphicsSystem,
-                this);
-            HighwayCameraRendering.RegisterNoteTracker(NoteTracker);
+            var graphicsSystem = HighwayCameraRendering?.GraphicsSystem;
+            if (graphicsSystem != null && Player.ThemePreset != null && NotePool != null)
+            {
+                NoteTracker = new NoteTracker(
+                    NotePool.ObjectCap,
+                    Player.ThemePreset.Name,
+                    HighwayIndex,
+                    graphicsSystem,
+                    this);
+                HighwayCameraRendering.RegisterNoteTracker(NoteTracker);
+            }
 
             SongLength = (float) chart.GetEndTime();
 
@@ -290,7 +294,7 @@ namespace YARG.Gameplay.Player
             // Cleanup NoteTracker for instanced rendering
             if (NoteTracker != null)
             {
-                HighwayCameraRendering.UnregisterNoteTracker(NoteTracker);
+                HighwayCameraRendering?.UnregisterNoteTracker(NoteTracker);
                 NoteTracker.Dispose();
                 NoteTracker = null;
             }
@@ -1008,7 +1012,7 @@ namespace YARG.Gameplay.Player
             }
 
             // GameObject path — only in dual render mode
-            if (!HighwayCameraRendering.dualRenderMode) return;
+            if (HighwayCameraRendering == null || !HighwayCameraRendering.dualRenderMode) return;
 
             var poolable = NotePool.KeyedTakeWithoutEnabling(note);
             if (poolable == null)
