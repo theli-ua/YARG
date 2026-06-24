@@ -5,7 +5,6 @@ using System.Text;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Profiling;
-using UnityEngine.Rendering;
 using YARG.Gameplay;
 
 namespace YARG.Editor.Automation
@@ -14,25 +13,21 @@ namespace YARG.Editor.Automation
     /// Command-line automation for loading songs, running gameplay, taking screenshots, and exiting.
     /// 
     /// Usage from command line:
-    ///   Unity -batchmode -nographics -executeMethod YARG.Editor.Automation.AutomationRunner.Run
-    ///   Unity -batchmode -executeMethod YARG.Editor.Automation.AutomationRunner.Run -songPath "path/to/chart" -duration 10 -screenshotDir "./screenshots"
+    ///   Unity -batchmode -executeMethod YARG.Editor.Automation.AutomationRunner.Run
+    ///   Unity -batchmode -executeMethod YARG.Editor.Automation.AutomationRunner.Run -duration 10 -screenshotDir "./screenshots"
     ///   
     /// Arguments (passed as Unity command-line args):
-    ///   -songPath "path"          - Path to a .chart file (relative to project or absolute)
-    ///   -songId "id"              - Song ID from the songs database (alternative to songPath)
     ///   -duration N               - Seconds to run (default: 15)
     ///   -screenshotDir "path"     - Directory for screenshots (default: "./AutomationScreenshots")
     ///   -screenshotInterval N     - Seconds between screenshots (default: 2)
     ///   -profile                  - Enable Unity Profiler and output stats
-    ///   -instrument "guitar"      - Instrument: guitar, drums, keys, prokeys, vocals (default: guitar)
-    ///   -difficulty N             - Difficulty: 0-4 (default: 2)
     ///   -exit                     - Exit after completion (default in batchmode)
     /// </summary>
     public static class AutomationRunner
     {
-        private const string DefaultScreenshotDir = "AutomationScreenshots";
-        private const int DefaultDuration = 15;
-        private const int DefaultScreenshotInterval = 2;
+        public const string DefaultScreenshotDir = "AutomationScreenshots";
+        public const int DefaultDuration = 15;
+        public const int DefaultScreenshotInterval = 2;
 
         /// <summary>
         /// Main entry point called via -executeMethod from command line.
@@ -54,18 +49,29 @@ namespace YARG.Editor.Automation
                 return;
             }
 
-            // Start coroutine for async operations
-            var runner = new GameObject("_AutomationRunner");
-            runner.AddComponent<AutomationRunnerBehaviour>();
-            DontDestroyOnLoad(runner);
-            
-            var behaviour = runner.GetComponent<AutomationRunnerBehaviour>();
-            behaviour.Run(args);
+            // Enter play mode to run the game
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            EditorApplication.isPlaying = true;
         }
 
-        private static Dictionary<string, string> ParseArguments()
+        private static void OnPlayModeStateChanged(PlayModeStateChange state)
         {
-            var args = new Dictionary<string, string>();
+            if (state == PlayModeStateChange.EnteredPlayMode)
+            {
+                EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+                
+                // Create runner in the runtime scene
+                var runner = new GameObject("_AutomationRunner");
+                var behaviour = runner.AddComponent<AutomationRunnerBehaviour>();
+                UnityEngine.Object.DontDestroyOnLoad(runner);
+                
+                behaviour.Run(ParseArguments());
+            }
+        }
+
+        private static System.Collections.Generic.Dictionary<string, string> ParseArguments()
+        {
+            var args = new System.Collections.Generic.Dictionary<string, string>();
             string[] commandLine = Environment.GetCommandLineArgs();
             
             for (int i = 0; i < commandLine.Length - 1; i++)
@@ -88,7 +94,7 @@ namespace YARG.Editor.Automation
     /// </summary>
     public class AutomationRunnerBehaviour : MonoBehaviour
     {
-        private Dictionary<string, string> _args;
+        private System.Collections.Generic.Dictionary<string, string> _args;
         private string _screenshotDir;
         private int _duration;
         private int _screenshotInterval;
@@ -96,16 +102,16 @@ namespace YARG.Editor.Automation
         private float _elapsedTime;
         private float _lastScreenshotTime;
         private bool _completed;
-        private bool _sceneLoaded;
+        private bool _sceneReady;
 
-        public void Run(Dictionary<string, string> args)
+        public void Run(System.Collections.Generic.Dictionary<string, string> args)
         {
             _args = args;
             
             // Parse settings
-            _screenshotDir = _args.GetValueOrDefault("screenshotDir", AutomationRunner.DefaultScreenshotDir);
-            _duration = int.TryParse(_args.GetValueOrDefault("duration", AutomationRunner.DefaultDuration.ToString()), out var d) ? d : AutomationRunner.DefaultDuration;
-            _screenshotInterval = int.TryParse(_args.GetValueOrDefault("screenshotInterval", AutomationRunner.DefaultScreenshotInterval.ToString()), out var si) ? si : AutomationRunner.DefaultScreenshotInterval;
+            _screenshotDir = _args.TryGetValue("screenshotDir", out var sd) ? sd : AutomationRunner.DefaultScreenshotDir;
+            _duration = _args.TryGetValue("duration", out var dur) && int.TryParse(dur, out var d) ? d : AutomationRunner.DefaultDuration;
+            _screenshotInterval = _args.TryGetValue("screenshotInterval", out var siStr) && int.TryParse(siStr, out var si) ? si : AutomationRunner.DefaultScreenshotInterval;
             _profile = _args.ContainsKey("profile");
 
             // Create screenshot directory
@@ -120,56 +126,20 @@ namespace YARG.Editor.Automation
                 Debug.Log("[AutomationRunner] Profiler enabled");
             }
 
-            // Load gameplay scene
-            LoadGameplayScene();
-        }
-
-        private void LoadGameplayScene()
-        {
-            // Find the gameplay scene
-            string gameplayScene = null;
-            string[] scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
-            
-            foreach (var scene in scenes)
-            {
-                if (scene.Contains("Gameplay") || scene.Contains("gameplay"))
-                {
-                    gameplayScene = scene;
-                    break;
-                }
-            }
-
-            if (gameplayScene == null)
-            {
-                // Try to find any scene with Gameplay in the path
-                var allScenes = Directory.GetFiles("Assets/Scenes", "*.unity", SearchOption.AllDirectories);
-                gameplayScene = allScenes.FirstOrDefault(s => s.Contains("Gameplay"));
-            }
-
-            if (gameplayScene == null)
-            {
-                Debug.LogError("[AutomationRunner] Could not find Gameplay scene!");
-                Exit(1);
-                return;
-            }
-
-            Debug.Log($"[AutomationRunner] Loading scene: {gameplayScene}");
-            
-            // Use SceneManager to load (works in both Editor and player)
-            UnityEngine.SceneManagement.SceneManager.LoadScene(Path.GetFileNameWithoutExtension(gameplayScene));
+            _sceneReady = false;
         }
 
         private void Update()
         {
             if (_completed) return;
 
-            // Wait for scene to be ready and GameManager to exist
-            if (!_sceneLoaded)
+            // Wait for GameManager to exist and song to be started
+            if (!_sceneReady)
             {
-                var gameManager = GameObject.FindObjectOfType<GameManager>();
+                var gameManager = UnityEngine.Object.FindAnyObjectByType<GameManager>();
                 if (gameManager != null && gameManager.IsSongStarted)
                 {
-                    _sceneLoaded = true;
+                    _sceneReady = true;
                     _elapsedTime = 0f;
                     Debug.Log($"[AutomationRunner] Song loaded, running for {_duration}s");
                     
@@ -224,16 +194,9 @@ namespace YARG.Editor.Automation
             stats.AppendLine($"=== Automation Stats ===");
             stats.AppendLine($"Duration: {_elapsedTime:F1}s");
             stats.AppendLine($"FPS: {1f / Time.deltaTime:F0}");
-            stats.AppendLine($"Allocated Memory: {UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / 1024 / 1024} MB");
-            stats.AppendLine($"Total Reserved Memory: {UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong() / 1024 / 1024} MB");
-            stats.AppendLine($"Texture Memory: {UnityEngine.Profiling.Profiler.GetTextureMemorySizeLong() / 1024 / 1024} MB");
-            stats.AppendLine($"Mesh Memory: {UnityEngine.Profiling.Profiler.GetMeshMemorySizeLong() / 1024 / 1024} MB");
-            
-            // Try to get frame info
-            var frameInfo = new UnityEngine.Rendering.Statistics();
-            stats.AppendLine($"Triangles: {frameInfo.triangles:N0}");
-            stats.AppendLine($"Batches: {frameInfo.batches}");
-            stats.AppendLine($"SetPass Calls: {frameInfo.setPassCalls}");
+            stats.AppendLine($"Allocated Memory: {Profiler.GetTotalAllocatedMemoryLong() / 1024 / 1024} MB");
+            stats.AppendLine($"Total Reserved Memory: {Profiler.GetTotalReservedMemoryLong() / 1024 / 1024} MB");
+            stats.AppendLine($"GC Heap Size: {GC.GetTotalMemory(false) / 1024 / 1024} MB");
             
             string statsFile = Path.Combine(_screenshotDir, "stats.txt");
             File.WriteAllText(statsFile, stats.ToString());
@@ -243,21 +206,16 @@ namespace YARG.Editor.Automation
 
         private void ExitNow()
         {
-            Exit(0);
-        }
-
-        private void Exit(int code)
-        {
             if (_profile)
                 Profiler.enabled = false;
                 
-            Debug.Log($"[AutomationRunner] Exiting with code {code}");
+            Debug.Log("[AutomationRunner] Exiting");
             
             #if UNITY_EDITOR
             EditorApplication.ExitPlaymode();
-            EditorApplication.Exit(code);
+            EditorApplication.Exit(0);
             #else
-            Application.Quit(code);
+            Application.Quit(0);
             #endif
         }
 
