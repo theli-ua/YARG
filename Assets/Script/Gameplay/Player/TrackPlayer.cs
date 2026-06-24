@@ -266,16 +266,26 @@ namespace YARG.Gameplay.Player
             FinishInitialization();
 
             // Initialize NoteTracker for instanced rendering
-            var graphicsSystem = HighwayCameraRendering?.GraphicsSystem;
-            if (graphicsSystem != null && Player.ThemePreset != null && NotePool != null)
+            // Resolve HighwayCameraRendering at runtime if not assigned in inspector
+            var hcr = HighwayCameraRendering ?? UnityEngine.Object.FindFirstObjectByType<HighwayCameraRendering>(
+                UnityEngine.FindObjectsInactive.Include);
+            var graphicsSystem = hcr?.GraphicsSystem;
+            var themePreset = Player.ThemePreset;
+
+            if (graphicsSystem == null) Debug.LogWarning($"[TrackPlayer{HighwayIndex}] GraphicsSystem is null (HCR={hcr != null})");
+            if (themePreset == null) Debug.LogWarning($"[TrackPlayer{HighwayIndex}] ThemePreset is null");
+            if (NotePool == null) Debug.LogWarning($"[TrackPlayer{HighwayIndex}] NotePool is null");
+
+            if (graphicsSystem != null && themePreset != null && NotePool != null)
             {
                 NoteTracker = new NoteTracker(
                     NotePool.ObjectCap,
-                    Player.ThemePreset.Name,
+                    themePreset.Name,
                     HighwayIndex,
                     graphicsSystem,
                     this);
-                HighwayCameraRendering.RegisterNoteTracker(NoteTracker);
+                hcr.RegisterNoteTracker(NoteTracker);
+                Debug.Log($"[TrackPlayer{HighwayIndex}] NoteTracker initialized (capacity={NotePool.ObjectCap}, theme={themePreset.Name})");
             }
 
             SongLength = (float) chart.GetEndTime();
