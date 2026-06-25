@@ -29,6 +29,8 @@ namespace YARG.Editor.Automation
         public const int DefaultDuration = 15;
         public const int DefaultScreenshotInterval = 2;
 
+        private static readonly System.Threading.ManualResetEvent s_playModeEvent = new(false);
+
         /// <summary>
         /// Main entry point called via -executeMethod from command line.
         /// </summary>
@@ -54,31 +56,30 @@ namespace YARG.Editor.Automation
             // creating the automation runner, because the runtime scene needs
             // to be fully initialized first.
             // IMPORTANT: Do NOT use -exit flag on command line. The AutomationRunnerBehaviour
-            // calls EditorApplication.Exit(0) itself when done. Using -exit causes Unity
-            // to shut down before play mode even starts.
+            // calls EditorApplication.Exit(0) itself when done.
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             EditorApplication.isPlaying = true;
 
-            // Keep editor alive until play mode enters, then let behaviour exit on completion.
-            // In batchmode without -exit, Unity waits for EditorApplication.Exit().
-            EditorApplication.update += WaitForPlayMode;
+            // Block until play mode enters. ManualResetEvent.WaitOne() yields the thread
+            // but Unity still processes editor callbacks (playModeStateChanged fires).
+            // This is the correct way to wait in batchmode without -exit.
+            s_playModeEvent.WaitOne(TimeSpan.FromSeconds(30));
+
+            if (!s_playModeEntered)
+            {
+                Debug.LogError("[AutomationRunner] Timed out waiting for play mode.");
+                EditorApplication.Exit(1);
+            }
         }
 
         private static bool s_playModeEntered;
-
-        private static void WaitForPlayMode()
-        {
-            if (s_playModeEntered)
-            {
-                EditorApplication.update -= WaitForPlayMode;
-            }
-        }
 
         private static void OnPlayModeStateChanged(PlayModeStateChange state)
         {
             if (state == PlayModeStateChange.EnteredPlayMode)
             {
                 s_playModeEntered = true;
+                s_playModeEvent.Set();
                 EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
                 Debug.Log("[AutomationRunner] Entered play mode");
 
