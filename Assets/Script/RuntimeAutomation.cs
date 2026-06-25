@@ -63,7 +63,29 @@ namespace YARG
             Debug.Log($"[RuntimeAutomation] Duration: {_duration}s, Benchmark: {_benchmarkMode}, SongHash: {_benchmarkSongHash}");
 
             // Start coroutine — do NOT block the main thread
-            StartCoroutine(RunAutomation());
+            StartCoroutine(RunAutomationWithSongWait());
+        }
+
+        private IEnumerator RunAutomationWithSongWait()
+        {
+            // Wait for song library to be populated
+            for (int i = 0; i < 500; i++)  // up to ~8 seconds
+            {
+                if (SongContainer.Songs.Length > 0) break;
+                yield return new WaitForSecondsRealtime(0.016f);
+            }
+
+            if (SongContainer.Songs.Length == 0)
+            {
+                Debug.LogError("[RuntimeAutomation] Song library empty after 8s. Check song folders.");
+                Application.Quit(1);
+                yield break;
+            }
+
+            Debug.Log($"[RuntimeAutomation] Song library ready: {SongContainer.Songs.Length} songs");
+
+            // Continue with automation
+            yield return StartCoroutine(RunAutomation());
         }
 
         private IEnumerator RunAutomation()
