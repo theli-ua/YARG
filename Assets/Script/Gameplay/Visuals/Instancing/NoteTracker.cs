@@ -72,6 +72,10 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// Add a new note to the tracker.
         /// Returns the flat index, or -1 if at capacity.
         /// </summary>
+        /// <summary>
+        /// Add a new note to the tracker.
+        /// Returns the flat index, or -1 if at capacity.
+        /// </summary>
         internal int Add(NoteData data, NoteSpawnData spawnData, object noteObject)
         {
             int index = _activeCount;
@@ -83,13 +87,67 @@ namespace YARG.Gameplay.Visuals.Instancing
             _noteObjects[index] = noteObject;
             _noteToIndex[noteObject] = index;
 
-            // Batches populated by ThemeMeshCache integration (section 5)
-            _coloredBatches[index] = null;
-            _noStarPowerBatches[index] = null;
-            _metalBatches[index] = null;
-            _coloredLocalIndices[index] = 0;
-            _noStarPowerLocalIndices[index] = 0;
-            _metalLocalIndices[index] = 0;
+            // Look up render groups from ThemeMeshCache
+            var renderData = ThemeMeshCache.GetRenderGroups(_themeName, spawnData.noteType, spawnData.isStarPowerVisible);
+
+            // Colored batch
+            if (renderData.Colored.Length > 0)
+            {
+                var group = renderData.Colored[0];
+                var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                if (batch != null)
+                {
+                    _coloredBatches[index] = batch;
+                    _coloredLocalIndices[index] = batch.activeCount;
+                    batch.activeCount++;
+                }
+            }
+            else
+            {
+                _coloredBatches[index] = null;
+                _coloredLocalIndices[index] = 0;
+            }
+
+            // NoStarPower batch
+            if (renderData.NoStarPower.Length > 0)
+            {
+                var group = renderData.NoStarPower[0];
+                var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                if (batch != null)
+                {
+                    _noStarPowerBatches[index] = batch;
+                    _noStarPowerLocalIndices[index] = batch.activeCount;
+                    batch.activeCount++;
+                }
+            }
+            else
+            {
+                _noStarPowerBatches[index] = null;
+                _noStarPowerLocalIndices[index] = 0;
+            }
+
+            // Metal batch
+            if (renderData.Metal.Length > 0)
+            {
+                var group = renderData.Metal[0];
+                var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                if (batch != null)
+                {
+                    _metalBatches[index] = batch;
+                    _metalLocalIndices[index] = batch.activeCount;
+                    batch.activeCount++;
+                }
+            }
+            else
+            {
+                _metalBatches[index] = null;
+                _metalLocalIndices[index] = 0;
+            }
+
+            if (renderData.Colored.Length == 0 && renderData.NoStarPower.Length == 0 && renderData.Metal.Length == 0)
+            {
+                Debug.LogWarning($"[NoteTracker] No render groups found for theme '{_themeName}', noteType={spawnData.noteType}, isStarPower={spawnData.isStarPowerVisible}");
+            }
 
             _activeCount++;
             return index;

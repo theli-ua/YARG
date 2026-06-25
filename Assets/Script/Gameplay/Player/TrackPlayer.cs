@@ -265,6 +265,32 @@ namespace YARG.Gameplay.Player
 
             FinishInitialization();
 
+            // Extract theme meshes for instanced rendering
+            // NotePool.Prefab is the theme note prefab with ThemeNote children
+            var themeModels = new System.Collections.Generic.Dictionary<ThemeNoteType, GameObject>();
+            var spModels = new System.Collections.Generic.Dictionary<ThemeNoteType, GameObject>();
+            if (NotePool?.Prefab != null)
+            {
+                var instance = GameObject.Instantiate(NotePool.Prefab);
+                try
+                {
+                    foreach (var themeNote in instance.GetComponentsInChildren<ThemeNote>(true))
+                    {
+                        if (themeNote.StarPowerVariant)
+                            spModels[themeNote.NoteType] = themeNote.gameObject;
+                        else
+                            themeModels[themeNote.NoteType] = themeNote.gameObject;
+                    }
+                }
+                finally
+                {
+                    GameObject.DestroyImmediate(instance);
+                }
+            }
+            var themeName = Player.ThemePreset?.Name ?? "Unknown";
+            ThemeMeshCache.ExtractTheme(themeName, themeModels, spModels);
+            Debug.Log($"[TrackPlayer{HighwayIndex}] ThemeMeshCache: {themeModels.Count} normal + {spModels.Count} SP models for '{themeName}'");
+
             // Initialize NoteTracker for instanced rendering
             // Resolve HighwayCameraRendering at runtime if not assigned in inspector
             var hcr = HighwayCameraRendering ?? UnityEngine.Object.FindFirstObjectByType<HighwayCameraRendering>(
