@@ -49,27 +49,30 @@ namespace YARG.Editor.Automation
                 return;
             }
 
-            // Enter play mode and WAIT until EnteredPlayMode fires.
-            // Without this wait, -exit flag causes Unity to shut down before
-            // the play mode state change callback fires.
+            // Enter play mode.
+            // We use playModeStateChanged to wait for EnteredPlayMode before
+            // creating the automation runner, because the runtime scene needs
+            // to be fully initialized first.
+            // IMPORTANT: Do NOT use -exit flag on command line. The AutomationRunnerBehaviour
+            // calls EditorApplication.Exit(0) itself when done. Using -exit causes Unity
+            // to shut down before play mode even starts.
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             EditorApplication.isPlaying = true;
 
-            // Block until play mode is entered (or timeout after 30s)
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            while (!s_playModeEntered && stopwatch.ElapsedMilliseconds < 30000)
-            {
-                // Process editor callbacks so play mode transition completes
-                System.Threading.Thread.Sleep(50);
-            }
-            if (!s_playModeEntered)
-            {
-                Debug.LogError("[AutomationRunner] Timed out waiting for play mode.");
-                EditorApplication.Exit(1);
-            }
+            // Keep editor alive until play mode enters, then let behaviour exit on completion.
+            // In batchmode without -exit, Unity waits for EditorApplication.Exit().
+            EditorApplication.update += WaitForPlayMode;
         }
 
         private static bool s_playModeEntered;
+
+        private static void WaitForPlayMode()
+        {
+            if (s_playModeEntered)
+            {
+                EditorApplication.update -= WaitForPlayMode;
+            }
+        }
 
         private static void OnPlayModeStateChanged(PlayModeStateChange state)
         {
@@ -77,6 +80,7 @@ namespace YARG.Editor.Automation
             {
                 s_playModeEntered = true;
                 EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+                Debug.Log("[AutomationRunner] Entered play mode");
 
                 // Create runner in the runtime scene
                 var runner = new GameObject("_AutomationRunner");
@@ -84,6 +88,10 @@ namespace YARG.Editor.Automation
                 UnityEngine.Object.DontDestroyOnLoad(runner);
 
                 behaviour.Run(ParseArguments());
+            }
+            else if (state == PlayModeStateChange.ExitingPlayMode)
+            {
+                EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             }
         }
 
