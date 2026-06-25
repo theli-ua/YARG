@@ -37,7 +37,7 @@ namespace YARG.Editor.Automation
         {
             // Parse command-line arguments
             var args = ParseArguments();
-            
+
             Debug.Log($"[AutomationRunner] Starting automation run");
             Debug.Log($"[AutomationRunner] Arguments: {string.Join(", ", args.Select(a => $"{a.Key}={a.Value}"))}");
 
@@ -49,25 +49,40 @@ namespace YARG.Editor.Automation
                 return;
             }
 
-            // Enter play mode immediately.
-            // We use playModeStateChanged to wait for EnteredPlayMode before
-            // creating the automation runner, because the runtime scene needs
-            // to be fully initialized first.
+            // Enter play mode and WAIT until EnteredPlayMode fires.
+            // Without this wait, -exit flag causes Unity to shut down before
+            // the play mode state change callback fires.
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             EditorApplication.isPlaying = true;
+
+            // Block until play mode is entered (or timeout after 30s)
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            while (!s_playModeEntered && stopwatch.ElapsedMilliseconds < 30000)
+            {
+                // Process editor callbacks so play mode transition completes
+                System.Threading.Thread.Sleep(50);
+            }
+            if (!s_playModeEntered)
+            {
+                Debug.LogError("[AutomationRunner] Timed out waiting for play mode.");
+                EditorApplication.Exit(1);
+            }
         }
+
+        private static bool s_playModeEntered;
 
         private static void OnPlayModeStateChanged(PlayModeStateChange state)
         {
             if (state == PlayModeStateChange.EnteredPlayMode)
             {
+                s_playModeEntered = true;
                 EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
-                
+
                 // Create runner in the runtime scene
                 var runner = new GameObject("_AutomationRunner");
                 var behaviour = runner.AddComponent<AutomationRunnerBehaviour>();
                 UnityEngine.Object.DontDestroyOnLoad(runner);
-                
+
                 behaviour.Run(ParseArguments());
             }
         }
