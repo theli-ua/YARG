@@ -58,11 +58,12 @@ namespace YARG.Editor.Automation
             // IMPORTANT: Do NOT use -exit flag on command line. The AutomationRunnerBehaviour
             // calls EditorApplication.Exit(0) itself when done.
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
-            EditorApplication.isPlaying = true;
+
+            // Try ExecuteMenuItem first (more reliable in batchmode than isPlaying = true)
+            EditorApplication.ExecuteMenuItem("File/Play");
 
             // Block until play mode enters. ManualResetEvent.WaitOne() yields the thread
             // but Unity still processes editor callbacks (playModeStateChanged fires).
-            // This is the correct way to wait in batchmode without -exit.
             s_playModeEvent.WaitOne(TimeSpan.FromSeconds(30));
 
             if (!s_playModeEntered)
