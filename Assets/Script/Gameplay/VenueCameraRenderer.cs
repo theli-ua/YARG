@@ -368,6 +368,11 @@ namespace YARG.Gameplay
             public static void RecreateTextures()
             {
                 var universalRenderPipelineAsset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
+                if (universalRenderPipelineAsset == null)
+                {
+                    Debug.LogWarning("[VenueCameraRenderer] No URP asset found, skipping texture creation.");
+                    return;
+                }
                 _previousFrameTexture?.Release();
                 _venuePPTexture?.Release();
 

@@ -49,7 +49,10 @@ namespace YARG.Editor.Automation
                 return;
             }
 
-            // Enter play mode to run the game
+            // Enter play mode immediately.
+            // We use playModeStateChanged to wait for EnteredPlayMode before
+            // creating the automation runner, because the runtime scene needs
+            // to be fully initialized first.
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             EditorApplication.isPlaying = true;
         }
@@ -74,14 +77,22 @@ namespace YARG.Editor.Automation
             var args = new System.Collections.Generic.Dictionary<string, string>();
             string[] commandLine = Environment.GetCommandLineArgs();
             
-            for (int i = 0; i < commandLine.Length - 1; i++)
+            for (int i = 1; i < commandLine.Length; i++)
             {
-                string arg = commandLine[i].TrimStart('-');
-                if (!string.IsNullOrEmpty(arg) && i + 1 < commandLine.Length)
+                string arg = commandLine[i];
+                if (!arg.StartsWith("-")) continue;
+                
+                string key = arg.Substring(1).TrimStart('-');
+                
+                // Check if next argument is a value (doesn't start with '-')
+                if (i + 1 < commandLine.Length && !commandLine[i + 1].StartsWith("-"))
                 {
-                    string value = commandLine[i + 1];
-                    args[arg] = value;
+                    args[key] = commandLine[i + 1];
                     i++; // Skip next as it's the value
+                }
+                else
+                {
+                    args[key] = "";
                 }
             }
             
