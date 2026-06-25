@@ -202,6 +202,9 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             if (_graphicsSystem == null || _activeCount == 0) return;
 
+            int notesWithBatches = 0;
+            int notesWithoutBatches = 0;
+
             for (int i = 0; i < _activeCount; i++)
             {
                 var spawn = _spawnData[i];
@@ -213,7 +216,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 float z = TrackPlayer.STRIKE_LINE_POS + (spawn.noteHitTime - visualTime) * noteSpeed;
 
                 // Build note element local matrix: T(baseX, 0, z) * S(scale)
-                // Scale: (1, noteHeight, 1) for guitar/keys; drums has conditional scaling
                 float scale = spawn.noteHeight;
                 Matrix4x4 noteLocal = Matrix4x4.TRS(
                     new Vector3(spawn.baseX, 0f, z),
@@ -228,7 +230,13 @@ namespace YARG.Gameplay.Visuals.Instancing
                 if (_coloredBatches[i] != null)
                 {
                     _graphicsSystem.UploadInstance(_coloredBatches[i], _coloredLocalIndices[i], worldMatrix, data.color);
+                    notesWithBatches++;
                 }
+                else
+                {
+                    notesWithoutBatches++;
+                }
+
                 // Upload to no-star-power batch
                 if (_noStarPowerBatches[i] != null)
                 {
@@ -241,9 +249,18 @@ namespace YARG.Gameplay.Visuals.Instancing
                 }
             }
 
+            // Diagnostic: log once when notes appear
+            if (_activeCount > 0 && !_hasLoggedActiveNotes)
+            {
+                _hasLoggedActiveNotes = true;
+                Debug.Log($"[NoteTracker] Active: {_activeCount}, with batches: {notesWithBatches}, without: {notesWithoutBatches}");
+            }
+
             // Flush uploads
             _graphicsSystem.UploadDirtyData(default);
         }
+
+        private bool _hasLoggedActiveNotes;
 
         /// <summary>
         /// Reset all note data for reuse.

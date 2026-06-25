@@ -50,6 +50,8 @@ namespace YARG.Gameplay.Visuals.Instancing
         private const int ZeroMatrixSize = 64; // float4x4 at offset 0
 
         private bool _disposed;
+        private bool _hasLoggedEmptyCull;
+        private bool _hasLoggedDrawCommands;
 
         #region ElementBatch (Task 2.2)
 
@@ -356,6 +358,12 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (totalVisible == 0)
             {
+                // Diagnostic: log batches state when called but nothing visible
+                if (!_hasLoggedEmptyCull && _batches.Count > 0)
+                {
+                    _hasLoggedEmptyCull = true;
+                    Debug.Log($"[BRG] Culling called: {_batches.Count} batches, 0 visible instances");
+                }
                 return default;
             }
 
@@ -397,6 +405,13 @@ namespace YARG.Gameplay.Visuals.Instancing
                     UnsafeUtility.WriteArrayElement(instancesPtr, visibleInstanceOffset + i, i);
                 }
                 visibleInstanceOffset += batch.activeCount;
+            }
+
+            // Diagnostic: log draw commands once
+            if (!_hasLoggedDrawCommands)
+            {
+                _hasLoggedDrawCommands = true;
+                Debug.Log($"[BRG] Generated {drawCommandIndex} draw commands, {visibleInstanceOffset} instances from {_batches.Count} batches");
             }
 
             // Write draw commands to culling output

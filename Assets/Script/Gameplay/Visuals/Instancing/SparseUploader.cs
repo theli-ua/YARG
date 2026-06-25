@@ -73,15 +73,22 @@ namespace YARG.Gameplay.Visuals.Instancing
                         Debug.Log("[SparseUploader] Compute shader loaded successfully.");
                         return;
                     }
+
+                    // Kernel not found
+                    Debug.LogWarning($"[SparseUploader] CopyKernel not found (index={copyKernel}). GPU: {SystemInfo.graphicsDeviceName}, Shader model: {SystemInfo.graphicsShaderLevel}");
                 }
                 catch (Exception e)
                 {
                     Debug.LogWarning($"[SparseUploader] Failed to initialize compute shader: {e.Message}");
                 }
             }
+            else
+            {
+                Debug.LogWarning("[SparseUploader] SparseUploader.compute not found in Resources/");
+            }
 
             // Fallback to direct uploads
-            Debug.LogWarning("[SparseUploader] Compute shader unavailable. Using direct upload fallback.");
+            Debug.LogWarning("[SparseUploader] Using direct upload fallback (GraphicsBuffer.SetData).");
             m_ShaderAvailable = false;
         }
 
