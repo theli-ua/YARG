@@ -1225,9 +1225,9 @@ namespace YARG.Gameplay.Player
                 {
                     NoteTracker.UploadToGPU(transform.localToWorldMatrix);
                 }
-                else if (!TrackPlayer_<TNote>._hasLoggedNullCamera)
+                else if (!_hasLoggedNullCamera)
                 {
-                    TrackPlayer_<TNote>._hasLoggedNullCamera = true;
+                    _hasLoggedNullCamera = true;
                     Debug.LogError($"[TrackPlayer{HighwayIndex}] TrackCamera is null, skipping UploadToGPU");
                 }
             }
