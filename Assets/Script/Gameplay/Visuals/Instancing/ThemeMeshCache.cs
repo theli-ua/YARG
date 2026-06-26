@@ -47,25 +47,31 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal static void ExtractFromTheme(string themeName, GameObject themeModel, ThemeNoteType noteType)
         {
-            if (themeModel == null) return;
+            if (themeModel == null)
+            {
+                Debug.LogError($"[ThemeMeshCache] ExtractFromTheme: themeModel is null for noteType={noteType}");
+                return;
+            }
 
             // Instantiate to read components
             var instance = GameObject.Instantiate(themeModel);
             try
             {
                 var themeNote = instance.GetComponent<ThemeNote>();
-                if (themeNote == null) return;
+                if (themeNote == null)
+                {
+                    Debug.LogError($"[ThemeMeshCache] ExtractFromTheme: no ThemeNote component on instantiated '{themeModel.name}' for noteType={noteType}");
+                    return;
+                }
 
-                bool isStarPower = themeNote.StarPowerVariant;
-                var rootTransform = instance.transform;
+                var coloredGroups = ExtractGroupsFromEntries(themeNote.ColoredMaterials, instance.transform);
+                var noStarPowerGroups = ExtractGroupsFromEntries(themeNote.ColoredMaterialsNoStarPower, instance.transform);
+                var metalGroups = ExtractGroupsFromEntries(themeNote.ColoredMetalMaterials, instance.transform);
 
-                // Extract from each material array independently
-                var coloredGroups = ExtractGroupsFromEntries(themeNote.ColoredMaterials, rootTransform);
-                var noStarPowerGroups = ExtractGroupsFromEntries(themeNote.ColoredMaterialsNoStarPower, rootTransform);
-                var metalGroups = ExtractGroupsFromEntries(themeNote.ColoredMetalMaterials, rootTransform);
+                Debug.LogError($"[ThemeMeshCache] Extracted: theme='{themeName}', noteType={noteType}, sp={themeNote.StarPowerVariant}, colored={coloredGroups.Length}, noSP={noStarPowerGroups.Length}, metal={metalGroups.Length}");
 
                 // Store in cache
-                s_cache[(themeName, noteType, isStarPower)] = new ThemeRenderData
+                s_cache[(themeName, noteType, themeNote.StarPowerVariant)] = new ThemeRenderData
                 {
                     Colored = coloredGroups,
                     NoStarPower = noStarPowerGroups,
@@ -125,6 +131,15 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal static ThemeRenderData GetRenderGroups(string themeName, ThemeNoteType noteType, bool isStarPowerVisible)
         {
+            // Debug: log first call
+            if (!_hasLoggedFirstCall)
+            {
+                _hasLoggedFirstCall = true;
+                Debug.LogError($"[ThemeMeshCache] GetRenderGroups called: theme='{themeName}', noteType={noteType}, sp={isStarPowerVisible}. Cache size: {s_cache.Count}");
+                foreach (var k in s_cache.Keys)
+                    Debug.LogError($"[ThemeMeshCache]   Key: ({k.Item1}, {k.Item2}, {k.Item3}), Colored={s_cache[k].Colored?.Length ?? -1}, NoSP={s_cache[k].NoStarPower?.Length ?? -1}, Metal={s_cache[k].Metal?.Length ?? -1}");
+            }
+
             // Try exact match first
             if (s_cache.TryGetValue((themeName, noteType, isStarPowerVisible), out var data))
                 return data;
@@ -154,12 +169,13 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (!_hasLoggedCacheMiss)
             {
                 _hasLoggedCacheMiss = true;
-                Debug.LogWarning($"[ThemeMeshCache] Lookup miss: theme='{themeName}', noteType={noteType}, sp={isStarPowerVisible}. Cache keys: {string.Join(", ", s_cache.Keys.Select(k => $"({k.Item1}, {k.Item2}, {k.Item3})"))}");
+                Debug.LogError($"[ThemeMeshCache] Lookup miss: theme='{themeName}', noteType={noteType}, sp={isStarPowerVisible}. Cache keys: {string.Join(", ", s_cache.Keys.Select(k => $"({k.Item1}, {k.Item2}, {k.Item3})"))}");
             }
             return default;
         }
 
         private static bool _hasLoggedCacheMiss;
+        private static bool _hasLoggedFirstCall;
 
         /// <summary>
         /// Extracts all note types from a theme's note prefabs.
