@@ -269,26 +269,23 @@ namespace YARG.Gameplay.Player
             // NotePool.Prefab is the theme note prefab with ThemeNote children
             var themeModels = new System.Collections.Generic.Dictionary<ThemeNoteType, GameObject>();
             var spModels = new System.Collections.Generic.Dictionary<ThemeNoteType, GameObject>();
+            GameObject instance = null;
             if (NotePool?.Prefab != null)
             {
-                var instance = GameObject.Instantiate(NotePool.Prefab);
-                try
+                instance = GameObject.Instantiate(NotePool.Prefab);
+                foreach (var themeNote in instance.GetComponentsInChildren<ThemeNote>(true))
                 {
-                    foreach (var themeNote in instance.GetComponentsInChildren<ThemeNote>(true))
-                    {
-                        if (themeNote.StarPowerVariant)
-                            spModels[themeNote.NoteType] = themeNote.gameObject;
-                        else
-                            themeModels[themeNote.NoteType] = themeNote.gameObject;
-                    }
-                }
-                finally
-                {
-                    GameObject.DestroyImmediate(instance);
+                    if (themeNote.StarPowerVariant)
+                        spModels[themeNote.NoteType] = themeNote.gameObject;
+                    else
+                        themeModels[themeNote.NoteType] = themeNote.gameObject;
                 }
             }
             var themeName = Player.ThemePreset?.Name ?? "Unknown";
             ThemeMeshCache.ExtractTheme(themeName, themeModels, spModels);
+            // Destroy the instance after extraction so the child GameObjects
+            // remain valid while ExtractFromTheme instantiates copies.
+            GameObject.DestroyImmediate(instance);
             Debug.Log($"[TrackPlayer{HighwayIndex}] ThemeMeshCache: {themeModels.Count} normal + {spModels.Count} SP models for '{themeName}'");
 
             // Initialize NoteTracker for instanced rendering
