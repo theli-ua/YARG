@@ -32,6 +32,22 @@ namespace YARG
         {
             // Parse command-line arguments
             var args = Environment.GetCommandLineArgs();
+            bool hasAutomationFlag = false;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] == "-benchmark" || args[i] == "-automation")
+                {
+                    hasAutomationFlag = true;
+                }
+            }
+
+            // Only run if explicitly triggered via command-line flag
+            if (!hasAutomationFlag)
+            {
+                enabled = false;
+                return;
+            }
+
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "-automationDuration" && int.TryParse(args[i + 1], out var d))

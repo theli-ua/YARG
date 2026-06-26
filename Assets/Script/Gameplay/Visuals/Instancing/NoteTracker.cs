@@ -285,13 +285,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return;
             }
 
-            // Diagnostic: log first upload
-            if (!_hasLoggedUpload)
-            {
-                _hasLoggedUpload = true;
-                Debug.LogError($"[NoteTracker] UploadToGPU: activeCount={_activeCount}");
-            }
-
             int notesWithBatches = 0;
             int notesWithoutBatches = 0;
 
