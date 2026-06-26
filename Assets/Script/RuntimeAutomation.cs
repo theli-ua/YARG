@@ -85,7 +85,7 @@ namespace YARG
             Debug.Log($"[RuntimeAutomation] Song library ready: {SongContainer.Songs.Length} songs");
 
             // Enable NoFail mode so the song doesn't fail without input
-            YARG.Settings.SettingsManager.Settings.NoFail.Value = YARG.Gameplay.NoFailMode.NoMeter;
+            YARG.Settings.SettingsManager.Settings.NoFail.Value = YARG.Gameplay.HUD.NoFailMode.NoMeter;
             Debug.Log("[RuntimeAutomation] NoFail mode enabled");
 
             // Continue with automation
