@@ -275,7 +275,22 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {
-            if (_graphicsSystem == null || _activeCount == 0) return;
+            if (_graphicsSystem == null || _activeCount == 0)
+            {
+                if (!_hasLoggedUploadSkip)
+                {
+                    _hasLoggedUploadSkip = true;
+                    Debug.LogError($"[NoteTracker] UploadToGPU skipped: graphicsSystem={_graphicsSystem != null}, activeCount={_activeCount}");
+                }
+                return;
+            }
+
+            // Diagnostic: log first upload
+            if (!_hasLoggedUpload)
+            {
+                _hasLoggedUpload = true;
+                Debug.LogError($"[NoteTracker] UploadToGPU: activeCount={_activeCount}");
+            }
 
             int notesWithBatches = 0;
             int notesWithoutBatches = 0;
@@ -338,6 +353,8 @@ namespace YARG.Gameplay.Visuals.Instancing
         private bool _hasLoggedActiveNotes;
         private bool _hasLoggedRemoveExpired;
         private bool _hasLoggedAdd;
+        private bool _hasLoggedUpload;
+        private bool _hasLoggedUploadSkip;
 
         /// <summary>
         /// Reset all note data for reuse.
