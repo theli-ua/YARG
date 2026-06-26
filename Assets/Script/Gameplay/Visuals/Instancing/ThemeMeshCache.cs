@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using YARG.Themes;
 
@@ -149,8 +150,16 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, false), out data))
                 return data;
 
+            // Debug: log cache keys on first miss
+            if (!_hasLoggedCacheMiss)
+            {
+                _hasLoggedCacheMiss = true;
+                Debug.LogWarning($"[ThemeMeshCache] Lookup miss: theme='{themeName}', noteType={noteType}, sp={isStarPowerVisible}. Cache keys: {string.Join(", ", s_cache.Keys.Select(k => $"({k.Item1}, {k.Item2}, {k.Item3})"))}");
+            }
             return default;
         }
+
+        private static bool _hasLoggedCacheMiss;
 
         /// <summary>
         /// Extracts all note types from a theme's note prefabs.
