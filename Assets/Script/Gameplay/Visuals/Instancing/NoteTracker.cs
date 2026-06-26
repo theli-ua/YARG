@@ -153,6 +153,13 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
 
             _activeCount++;
+
+            // Diagnostic: log first add
+            if (!_hasLoggedAdd)
+            {
+                _hasLoggedAdd = true;
+                Debug.LogError($"[NoteTracker] First note added: noteType={spawnData.noteType}, hitTime={spawnData.noteHitTime:F2}, baseX={spawnData.baseX:F2}");
+            }
             return index;
         }
 
@@ -243,6 +250,13 @@ namespace YARG.Gameplay.Visuals.Instancing
                 }
             }
             _activeCount = writeIndex;
+
+            // Diagnostic: log active count on first call
+            if (!_hasLoggedRemoveExpired)
+            {
+                _hasLoggedRemoveExpired = true;
+                Debug.LogError($"[NoteTracker] RemoveExpired: had {_activeCount} active, kept {writeIndex}, removed {_activeCount - writeIndex}. visualTime={visualTime:F2}");
+            }
         }
 
         /// <summary>
@@ -322,6 +336,8 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         private bool _hasLoggedActiveNotes;
+        private bool _hasLoggedRemoveExpired;
+        private bool _hasLoggedAdd;
 
         /// <summary>
         /// Reset all note data for reuse.
