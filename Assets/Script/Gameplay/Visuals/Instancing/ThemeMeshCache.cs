@@ -129,8 +129,24 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return data;
 
             // Fall back to non-SP if we're looking for SP
-            if (!isStarPowerVisible) return default;
+            if (!isStarPowerVisible)
+            {
+                // Try wildcard as last resort
+                if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, false), out var wildcardData))
+                    return wildcardData;
+                return default;
+            }
+
+            // Looking for SP: try non-SP fallback
             if (s_cache.TryGetValue((themeName, noteType, false), out data))
+                return data;
+
+            // Try wildcard SP
+            if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, true), out data))
+                return data;
+
+            // Try wildcard non-SP
+            if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, false), out data))
                 return data;
 
             return default;
