@@ -91,7 +91,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             var renderData = ThemeMeshCache.GetRenderGroups(_themeName, spawnData.noteType, spawnData.isStarPowerVisible);
 
             // Colored batch
-            if (renderData.Colored.Length > 0)
+            if (renderData.Colored != null && renderData.Colored.Length > 0)
             {
                 var group = renderData.Colored[0];
                 var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
@@ -102,14 +102,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                     batch.activeCount++;
                 }
             }
-            else
-            {
-                _coloredBatches[index] = null;
-                _coloredLocalIndices[index] = 0;
-            }
 
             // NoStarPower batch
-            if (renderData.NoStarPower.Length > 0)
+            if (renderData.NoStarPower != null && renderData.NoStarPower.Length > 0)
             {
                 var group = renderData.NoStarPower[0];
                 var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
@@ -120,14 +115,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                     batch.activeCount++;
                 }
             }
-            else
-            {
-                _noStarPowerBatches[index] = null;
-                _noStarPowerLocalIndices[index] = 0;
-            }
 
             // Metal batch
-            if (renderData.Metal.Length > 0)
+            if (renderData.Metal != null && renderData.Metal.Length > 0)
             {
                 var group = renderData.Metal[0];
                 var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
@@ -138,13 +128,26 @@ namespace YARG.Gameplay.Visuals.Instancing
                     batch.activeCount++;
                 }
             }
-            else
+
+            if (renderData.Colored == null || renderData.Colored.Length == 0)
+            {
+                _coloredBatches[index] = null;
+                _coloredLocalIndices[index] = 0;
+            }
+            if (renderData.NoStarPower == null || renderData.NoStarPower.Length == 0)
+            {
+                _noStarPowerBatches[index] = null;
+                _noStarPowerLocalIndices[index] = 0;
+            }
+            if (renderData.Metal == null || renderData.Metal.Length == 0)
             {
                 _metalBatches[index] = null;
                 _metalLocalIndices[index] = 0;
             }
 
-            if (renderData.Colored.Length == 0 && renderData.NoStarPower.Length == 0 && renderData.Metal.Length == 0)
+            if ((renderData.Colored == null || renderData.Colored.Length == 0) &&
+                (renderData.NoStarPower == null || renderData.NoStarPower.Length == 0) &&
+                (renderData.Metal == null || renderData.Metal.Length == 0))
             {
                 Debug.LogWarning($"[NoteTracker] No render groups found for theme '{_themeName}', noteType={spawnData.noteType}, isStarPower={spawnData.isStarPowerVisible}");
             }
