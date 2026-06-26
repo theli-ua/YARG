@@ -186,6 +186,8 @@ namespace YARG.Gameplay.Player
         private bool _wasStarPowerActive;
         private bool _didLowerTrack;
 
+        private static bool _hasLoggedNullCamera;
+
         private Queue<TrackEffect> _upcomingEffects = new();
         private List<TrackEffectElement> _currentEffects = new();
         protected List<TrackEffect> _trackEffects = new();
@@ -1222,6 +1224,11 @@ namespace YARG.Gameplay.Player
                 if (TrackCamera != null)
                 {
                     NoteTracker.UploadToGPU(transform.localToWorldMatrix);
+                }
+                else if (!TrackPlayer_<TNote>._hasLoggedNullCamera)
+                {
+                    TrackPlayer_<TNote>._hasLoggedNullCamera = true;
+                    Debug.LogError($"[TrackPlayer{HighwayIndex}] TrackCamera is null, skipping UploadToGPU");
                 }
             }
 
