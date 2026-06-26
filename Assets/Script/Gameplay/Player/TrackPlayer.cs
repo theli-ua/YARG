@@ -187,6 +187,7 @@ namespace YARG.Gameplay.Player
         private bool _didLowerTrack;
 
         private static bool _hasLoggedNullCamera;
+        private bool _hasLoggedGameplayUpdate;
 
         private Queue<TrackEffect> _upcomingEffects = new();
         private List<TrackEffectElement> _currentEffects = new();
@@ -1213,6 +1214,13 @@ namespace YARG.Gameplay.Player
         public override void GameplayUpdate()
         {
             base.GameplayUpdate();
+
+            // Diagnostic: log first call
+            if (!_hasLoggedGameplayUpdate)
+            {
+                _hasLoggedGameplayUpdate = true;
+                Debug.LogError($"[TrackPlayer{HighwayIndex}] GameplayUpdate called, NoteTracker={NoteTracker != null}, TrackCamera={TrackCamera != null}");
+            }
 
             if (NoteTracker != null)
             {
