@@ -109,6 +109,15 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var material = materials[entry.MaterialIndex];
                 if (material == null) continue;
 
+                // TEMP: swap to DOTS-compatible test shader for BRG verification
+                var dotsShader = Shader.Find("YARG/NoteBRGUnlit");
+                if (dotsShader != null)
+                {
+                    var testMat = new Material(dotsShader);
+                    testMat.CopyPropertiesFromMaterial(material);
+                    material = testMat;
+                }
+
                 // Compute mesh-local offset: world → root → mesh
                 var meshLocalOffset = rootTransform.worldToLocalMatrix * entry.Mesh.localToWorldMatrix;
 
