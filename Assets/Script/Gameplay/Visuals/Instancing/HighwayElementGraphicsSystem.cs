@@ -129,7 +129,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 ? GraphicsBuffer.Target.Constant
                 : GraphicsBuffer.Target.Raw;
             var stride = useConstantBuffer ? 16 : sizeof(int);
-            Debug.Log($"[BRG] BufferTarget={BatchRendererGroup.BufferTarget}, useConstant={useConstantBuffer}, target={bufferTarget}, stride={stride}");
 
             // Allocate GPU buffer
             _gpuBuffer = new GraphicsBuffer(bufferTarget, InitialBufferSize / stride, stride);
@@ -283,7 +282,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 Value = 0x80000000u | (uint)baseColorOffset
             };
 
-            Debug.Log($"[BRG] Batch registered: mesh={meshID}, mat={materialID}, owtOff={objectToWorldOffset}, wtoOff={worldToObjectOffset}, colOff={baseColorOffset}, cap={capacity}");
+
 
             // Register batch with BRG
             BatchID batchID = _brg.AddBatch(metadata, _gpuBufferHandle);
