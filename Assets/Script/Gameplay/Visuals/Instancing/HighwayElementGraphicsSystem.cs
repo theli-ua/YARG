@@ -123,15 +123,23 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal void OnCreate()
         {
+            // Check if API uses ConstantBuffer or RawBuffer
+            bool useConstantBuffer = BatchRendererGroup.BufferTarget == BatchBufferTarget.ConstantBuffer;
+            var bufferTarget = useConstantBuffer
+                ? GraphicsBuffer.Target.Constant
+                : GraphicsBuffer.Target.Raw;
+            var stride = useConstantBuffer ? 16 : sizeof(int);
+
             // Allocate GPU buffer
-            _gpuBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Raw, InitialBufferSize / sizeof(int), sizeof(int));
+            _gpuBuffer = new GraphicsBuffer(bufferTarget, InitialBufferSize / stride, stride);
             _gpuBuffer.name = "HighwayElementGPUBuffer";
 
-            // Write zero Matrix4x4 at offset 0 (placeholder for unity_ObjectToWorld)
-            _gpuBuffer.SetData(new[] { Matrix4x4.zero }, 0, 0, 1);
+            // Write 64 bytes of zeros at offset 0 (BRG convention: unset metadata reads from addr 0)
+            var zeroInit = new int[ZeroMatrixSize / sizeof(int)];
+            _gpuBuffer.SetData(zeroInit, 0, 0, zeroInit.Length);
 
-            // Initialize heap allocator
-            _heapAllocator = new HeapAllocator((ulong)InitialBufferSize, 16);
+            // Initialize heap allocator — start after 64-byte zero prefix
+            _heapAllocator = new HeapAllocator((ulong)(InitialBufferSize - ZeroMatrixSize), 16);
 
             // Initialize sparse uploader
             _sparseUploader = new SparseUploader(_gpuBuffer, bufferChunkSize: 256 * 1024);
@@ -146,6 +154,9 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             // Enable camera view type
             _brg.SetEnabledViewTypes(new[] { BatchCullingViewType.Camera });
+
+            // Set huge bounds so all highway notes are visible
+            _brg.SetGlobalBounds(new Bounds(Vector3.zero, new Vector3(1048576f, 1048576f, 1048576f)));
 
             // Get buffer handle for BRG
             _gpuBufferHandle = _gpuBuffer.bufferHandle;
@@ -247,8 +258,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return null;
             }
 
-            // Compute SoA offsets within the allocation
-            int objectToWorldOffset = (int)block.begin;
+            // Compute SoA offsets within the allocation (add ZeroMatrixSize for 64-byte prefix)
+            int objectToWorldOffset = (int)block.begin + ZeroMatrixSize;
             int worldToObjectOffset = objectToWorldOffset + 48 * capacity;
             int baseColorOffset = worldToObjectOffset + 48 * capacity;
 
