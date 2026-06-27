@@ -1211,15 +1211,20 @@ namespace YARG.Gameplay.Player
             OnStarPowerPhraseHit();
         }
 
+        private int _gpFrameCounter;
+        private double _gpLogTimer;
+
         public override void GameplayUpdate()
         {
             base.GameplayUpdate();
+            _gpFrameCounter++;
 
-            // Diagnostic: log first call
-            if (!_hasLoggedGameplayUpdate)
+            // Diagnostic: log every second
+            _gpLogTimer += Time.deltaTime;
+            if (_gpLogTimer >= 1.0)
             {
-                _hasLoggedGameplayUpdate = true;
-                Debug.LogError($"[TrackPlayer{HighwayIndex}] GameplayUpdate called, NoteTracker={NoteTracker != null}, TrackCamera={TrackCamera != null}");
+                _gpLogTimer = 0;
+                Debug.LogError($"[TrackPlayer{HighwayIndex}] GameplayUpdate frame={_gpFrameCounter}, NoteTracker={NoteTracker != null}, activeCount={NoteTracker?.ActiveCount ?? -1}, TrackCamera={TrackCamera != null}");
             }
 
             if (NoteTracker != null)
@@ -1232,11 +1237,6 @@ namespace YARG.Gameplay.Player
                 if (TrackCamera != null)
                 {
                     NoteTracker.UploadToGPU(transform.localToWorldMatrix);
-                }
-                else if (!_hasLoggedNullCamera)
-                {
-                    _hasLoggedNullCamera = true;
-                    Debug.LogError($"[TrackPlayer{HighwayIndex}] TrackCamera is null, skipping UploadToGPU");
                 }
             }
 

@@ -20,7 +20,8 @@ namespace YARG.Gameplay.Visuals.Instancing
         // CPU-side data — flat arrays, one entry per spawned note
         private NativeArray<NoteData> _notes;
         private NativeArray<NoteSpawnData> _spawnData;
-        private int _activeCount; // tracks how many notes are active (swap-remove keeps dense)
+        private int _activeCount; // tracks how many notes are active (swap-remove keeps
+        internal int ActiveCount => _activeCount; // diagnostic dense)
 
         // Reverse lookup: chart note object → flat index
         private Dictionary<object, int> _noteToIndex = new();
