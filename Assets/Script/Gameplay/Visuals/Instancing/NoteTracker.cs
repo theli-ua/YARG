@@ -337,18 +337,23 @@ namespace YARG.Gameplay.Visuals.Instancing
                 }
             }
 
-            // Diagnostic: log once when notes appear
-            if (_activeCount > 0 && !_hasLoggedActiveNotes)
+            // Diagnostic: log batch state every 60 frames when notes active
+            if (_uploadFrameCounter++ % 60 == 0 && _activeCount > 0)
             {
-                _hasLoggedActiveNotes = true;
-                Debug.Log($"[NoteTracker] Active: {_activeCount}, with batches: {notesWithBatches}, without: {notesWithoutBatches}");
+                int batchActiveTotal = 0;
+                for (int i = 0; i < _activeCount; i++)
+                {
+                    if (_coloredBatches[i] != null) batchActiveTotal += _coloredBatches[i].activeCount;
+                    if (_metalBatches[i] != null) batchActiveTotal += _metalBatches[i].activeCount;
+                }
+                Debug.LogError($"[NoteTracker] Upload: trackerActive={_activeCount}, withBatches={notesWithBatches}, totalBatchActive={batchActiveTotal}");
             }
 
             // Flush uploads
             _graphicsSystem.UploadDirtyData(default);
         }
 
-        private bool _hasLoggedActiveNotes;
+        private int _uploadFrameCounter;
         private bool _hasLoggedRemoveExpired;
         private bool _hasLoggedAdd;
         private bool _hasLoggedUpload;
