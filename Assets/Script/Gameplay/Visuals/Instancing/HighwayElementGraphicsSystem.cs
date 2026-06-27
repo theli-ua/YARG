@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
@@ -52,6 +53,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         private bool _disposed;
         private bool _hasLoggedEmptyCull;
         private bool _hasLoggedDrawCommands;
+        private int _cullFrameCounter;
 
         #region ElementBatch (Task 2.2)
 
@@ -358,11 +360,12 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (totalVisible == 0)
             {
-                // Diagnostic: log batches state when called but nothing visible
-                if (!_hasLoggedEmptyCull && _batches.Count > 0)
+                // Diagnostic: log batch details periodically
+                _cullFrameCounter++;
+                if (_cullFrameCounter % 60 == 0 && _batches.Count > 0)
                 {
-                    _hasLoggedEmptyCull = true;
-                    Debug.Log($"[BRG] Culling called: {_batches.Count} batches, 0 visible instances");
+                    var details = string.Join(", ", _batches.Values.Select(b => $"active={b.activeCount},cap={b.capacity}"));
+                    Debug.LogError($"[BRG] Cull frame={_cullFrameCounter}: {_batches.Count} batches, visible=0. [{details}]");
                 }
                 return default;
             }
