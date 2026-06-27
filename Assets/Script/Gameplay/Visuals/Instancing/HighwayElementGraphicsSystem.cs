@@ -367,6 +367,9 @@ namespace YARG.Gameplay.Visuals.Instancing
             BatchCullingOutput cullingOutput,
             IntPtr userContext)
         {
+            // TEMP: disable BRG culling entirely to isolate crash
+            if (true) return default;
+
             // Guard against disposal during shutdown
             if (_disposed || _brg == null)
                 return default;
