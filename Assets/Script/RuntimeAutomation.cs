@@ -27,6 +27,7 @@ namespace YARG
         private bool _benchmarkMode;
         private string _benchmarkSongHash;
         private string _benchmarkFile;
+        private double _skipSeconds;
 
         private void Awake()
         {
@@ -201,7 +202,25 @@ namespace YARG
                 yield break;
             }
 
-            Debug.Log($"[RuntimeAutomation] Song started, running for {_duration}s");
+            Debug.Log($"[RuntimeAutomation] Song started, waiting for notes...");
+
+            // Wait for notes to appear (skip song intro)
+            for (int i = 0; i < 2000; i++)  // up to ~32 seconds
+            {
+                var tp = UnityEngine.Object.FindObjectsByType<YARG.Gameplay.Player.TrackPlayer>(UnityEngine.FindObjectsInactive.Include, UnityEngine.FindObjectsSortMode.None);
+                bool hasNotes = false;
+                foreach (var t in tp)
+                {
+                    if (t.NoteTracker != null && t.NoteTracker.ActiveCount > 0)
+                    {
+                        hasNotes = true;
+                        break;
+                    }
+                }
+                if (hasNotes) break;
+                yield return new WaitForSecondsRealtime(0.016f);
+            }
+            Debug.Log($"[RuntimeAutomation] Notes appeared, running for {_duration}s");
 
             // Take initial screenshot (non-benchmark)
             if (!_benchmarkMode)
