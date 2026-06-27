@@ -351,6 +351,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal JobHandle UploadDirtyData(JobHandle dependency)
         {
+            if (_disposed) return dependency;
             if (_sparseUploader != null)
                 _sparseUploader.Commit();
             return dependency;
@@ -366,6 +367,10 @@ namespace YARG.Gameplay.Visuals.Instancing
             BatchCullingOutput cullingOutput,
             IntPtr userContext)
         {
+            // Guard against disposal during shutdown
+            if (_disposed || _brg == null)
+                return default;
+
             // First pass: count total visible instances
             int totalVisible = 0;
             foreach (var batch in _batches.Values)
@@ -525,6 +530,8 @@ namespace YARG.Gameplay.Visuals.Instancing
         internal void UploadInstance(ElementBatch batch, int instanceIndex,
             Matrix4x4 objectToWorld, Vector4 baseColor)
         {
+            if (_disposed) return;
+
             if (batch == null)
             {
                 Debug.LogError($"[HighwayElementGraphicsSystem] UploadInstance called with null batch at index {instanceIndex}.");
