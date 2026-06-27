@@ -263,6 +263,8 @@ namespace YARG
                 WriteBenchmarkFrameTimes(frameCount);
 
             Debug.Log($"[RuntimeAutomation] Complete. Elapsed: {elapsed:F1}s, Frames: {frameCount}");
+            // Wait one frame before quitting to let Unity finish rendering
+            yield return null;
             Application.Quit(0);
         }
 
