@@ -45,51 +45,10 @@ namespace YARG.Gameplay.Visuals.Instancing
             m_BufferChunkSize = bufferChunkSize;
             m_ShaderAvailable = false;
 
-            // Try to load compute shader
-            var shader = Resources.Load<ComputeShader>("SparseUploader");
-            if (shader != null)
-            {
-                try
-                {
-                    int copyKernel = shader.FindKernel("CopyKernel");
-                    if (copyKernel >= 0)
-                    {
-                        m_Shader = shader;
-                        m_CopyKernelIndex = copyKernel;
-                        m_ShaderAvailable = true;
-
-                        m_OperationCapacity = 4096;
-                        m_Operations = (Operation*)UnsafeUtility.Malloc(
-                            m_OperationCapacity * UnsafeUtility.SizeOf<Operation>(), 8, Allocator.Persistent);
-                        m_OperationCount = 0;
-
-                        m_DataBase = (byte*)UnsafeUtility.Malloc(bufferChunkSize, 64, Allocator.Persistent);
-                        m_DataWriteOffset = bufferChunkSize;
-
-                        m_SrcBufferID = Shader.PropertyToID("srcBuffer");
-                        m_DstBufferID = Shader.PropertyToID("dstBuffer");
-                        m_OperationsBaseID = Shader.PropertyToID("operationsBase");
-
-                        Debug.Log("[SparseUploader] Compute shader loaded successfully.");
-                        return;
-                    }
-
-                    // Kernel not found
-                    Debug.LogWarning($"[SparseUploader] CopyKernel not found (index={copyKernel}). GPU: {SystemInfo.graphicsDeviceName}, Shader model: {SystemInfo.graphicsShaderLevel}");
-                }
-                catch (Exception e)
-                {
-                    Debug.LogWarning($"[SparseUploader] Failed to initialize compute shader: {e.Message}");
-                }
-            }
-            else
-            {
-                Debug.LogWarning("[SparseUploader] SparseUploader.compute not found in Resources/");
-            }
-
-            // Fallback to direct uploads
-            Debug.LogWarning("[SparseUploader] Using direct upload fallback (GraphicsBuffer.SetData).");
+            // Disable compute shader path — has buffer pointer bugs that cause SIGSEGV.
+            // Use direct upload fallback which is simpler and more reliable.
             m_ShaderAvailable = false;
+            Debug.Log("[SparseUploader] Using direct upload (GraphicsBuffer.SetData).");
         }
 
         /// <inheritdoc/>
