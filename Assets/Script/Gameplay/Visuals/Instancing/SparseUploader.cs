@@ -229,12 +229,21 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         private void AddUploadDirect(void* src, int size, int offsetInBytes, int repeatCount)
         {
+            if (m_DestinationBuffer == null || m_Disposed)
+                return;
+
             // For direct uploads, stage data in a temp NativeArray and use SetData
             for (int r = 0; r < repeatCount; r++)
             {
                 int destOffset = offsetInBytes + r * size;
                 int elementOffset = destOffset / 4; // GraphicsBuffer is in ints
                 int elemCount = (size + 3) / 4; // Round up to int boundary
+
+                if (elementOffset < 0 || elementOffset + elemCount > m_DestinationBuffer.count)
+                {
+                    Debug.LogError($"[SparseUploader] Upload out of bounds: offset={elementOffset}, count={elemCount}, buffer={m_DestinationBuffer.count}");
+                    continue;
+                }
 
                 var temp = new NativeArray<int>(elemCount, Allocator.Temp);
                 UnsafeUtility.MemCpy(temp.GetUnsafePtr(), src, size);
