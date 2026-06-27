@@ -155,11 +155,15 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             _activeCount++;
 
-            // Diagnostic: log first add
+            // Diagnostic: log first add with batch state
             if (!_hasLoggedAdd)
             {
                 _hasLoggedAdd = true;
-                Debug.LogError($"[NoteTracker] First note added: noteType={spawnData.noteType}, hitTime={spawnData.noteHitTime:F2}, baseX={spawnData.baseX:F2}");
+                Debug.LogError($"[NoteTracker] First note added: noteType={spawnData.noteType}, hitTime={spawnData.noteHitTime:F2}, baseX={spawnData.baseX:F2}, coloredBatch={_coloredBatches[index] != null}, metalBatch={_metalBatches[index] != null}");
+                if (_coloredBatches[index] != null)
+                    Debug.LogError($"[NoteTracker]   coloredBatch: activeCount={_coloredBatches[index].activeCount}, capacity={_coloredBatches[index].capacity}");
+                if (_metalBatches[index] != null)
+                    Debug.LogError($"[NoteTracker]   metalBatch: activeCount={_metalBatches[index].activeCount}, capacity={_metalBatches[index].capacity}");
             }
             return index;
         }
