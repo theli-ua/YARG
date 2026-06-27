@@ -129,6 +129,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 ? GraphicsBuffer.Target.Constant
                 : GraphicsBuffer.Target.Raw;
             var stride = useConstantBuffer ? 16 : sizeof(int);
+            Debug.Log($"[BRG] BufferTarget={BatchRendererGroup.BufferTarget}, useConstant={useConstantBuffer}, target={bufferTarget}, stride={stride}");
 
             // Allocate GPU buffer
             _gpuBuffer = new GraphicsBuffer(bufferTarget, InitialBufferSize / stride, stride);
@@ -264,6 +265,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             int baseColorOffset = worldToObjectOffset + 48 * capacity;
 
             // Build metadata array for BRG
+            // NOTE: _BaseColor metadata may crash on some shaders - try without if crash persists
             var metadata = new NativeArray<MetadataValue>(3, Allocator.Temp);
             metadata[0] = new MetadataValue
             {
@@ -280,6 +282,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                 NameID = Shader.PropertyToID("_BaseColor"),
                 Value = 0x80000000u | (uint)baseColorOffset
             };
+
+            Debug.Log($"[BRG] Batch registered: mesh={meshID}, mat={materialID}, owtOff={objectToWorldOffset}, wtoOff={worldToObjectOffset}, colOff={baseColorOffset}, cap={capacity}");
 
             // Register batch with BRG
             BatchID batchID = _brg.AddBatch(metadata, _gpuBufferHandle);
@@ -521,6 +525,12 @@ namespace YARG.Gameplay.Visuals.Instancing
         internal void UploadInstance(ElementBatch batch, int instanceIndex,
             Matrix4x4 objectToWorld, Vector4 baseColor)
         {
+            if (batch == null)
+            {
+                Debug.LogError($"[HighwayElementGraphicsSystem] UploadInstance called with null batch at index {instanceIndex}.");
+                return;
+            }
+
             if (instanceIndex >= batch.capacity)
             {
                 Debug.LogError($"[HighwayElementGraphicsSystem] Instance index {instanceIndex} exceeds batch capacity {batch.capacity}.");
