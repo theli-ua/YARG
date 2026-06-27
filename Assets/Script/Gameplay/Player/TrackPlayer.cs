@@ -1077,7 +1077,15 @@ namespace YARG.Gameplay.Player
         /// <summary>Creates NoteSpawnData for a spawned note. Override in instrument-specific players.</summary>
         protected virtual NoteSpawnData CreateNoteSpawnData(TNote note)
         {
-            return default;
+            var data = new NoteSpawnData
+            {
+                noteHitTime = (float)note.Time,
+                baseX = 0f, // Override in instrument-specific player for correct lane X
+                noteHeight = Player.HighwayPreset?.NoteHeight ?? 1f,
+                noteType = ThemeNoteType.Wildcard, // Fallback; override for specific types
+                isStarPowerVisible = false
+            };
+            return data;
         }
 
         protected abstract void InitializeSpawnedNote(IPoolable poolable, TNote note);
