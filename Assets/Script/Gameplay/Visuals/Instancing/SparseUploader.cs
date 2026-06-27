@@ -241,7 +241,7 @@ namespace YARG.Gameplay.Visuals.Instancing
 
                 if (elementOffset < 0 || elementOffset + elemCount > m_DestinationBuffer.count)
                 {
-                    Debug.LogError($"[SparseUploader] Upload out of bounds: offset={elementOffset}, count={elemCount}, buffer={m_DestinationBuffer.count}");
+
                     continue;
                 }
 

@@ -1249,7 +1249,7 @@ namespace YARG.Gameplay.Player
                 // Diagnostic: log activeCount BEFORE RemoveExpired (every 60 frames)
                 if (_gpFrameCounter % 60 == 0)
                 {
-                    Debug.LogError($"[TrackPlayer{HighwayIndex}] Pre-RemoveExpired: active={NoteTracker.ActiveCount}");
+    
                 }
 
                 NoteTracker.RemoveExpired();

@@ -48,12 +48,13 @@ namespace YARG.Gameplay.Visuals.Instancing
         private const int InitialBufferSize = 2 * 1024 * 1024; // 2MB initial
         private const int BytesPerInstance = 112; // 48 + 48 + 16
         private const int DefaultBatchCapacity = 256;
+
+        private int _cullFrameCounter;
+        private bool _hasLoggedDrawCommands;
         private const int ZeroMatrixSize = 64; // float4x4 at offset 0
 
         private bool _disposed;
-        private bool _hasLoggedEmptyCull;
-        private bool _hasLoggedDrawCommands;
-        private int _cullFrameCounter;
+
 
         #region ElementBatch (Task 2.2)
 
@@ -384,7 +385,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 if (_cullFrameCounter % 60 == 0 && _batches.Count > 0)
                 {
                     var details = string.Join(", ", _batches.Values.Select(b => $"active={b.activeCount},cap={b.capacity}"));
-                    Debug.LogError($"[BRG] Cull frame={_cullFrameCounter}: {_batches.Count} batches, visible=0. [{details}]");
+
                 }
                 return default;
             }
@@ -434,7 +435,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (!_hasLoggedDrawCommands)
             {
                 _hasLoggedDrawCommands = true;
-                Debug.Log($"[BRG] Generated {drawCommandIndex} draw commands, {visibleInstanceOffset} instances from {_batches.Count} batches");
+
             }
 
             // Write draw commands to culling output (use pointer, not struct copy)
@@ -532,20 +533,20 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (batch == null)
             {
-                Debug.LogError($"[HighwayElementGraphicsSystem] UploadInstance called with null batch at index {instanceIndex}.");
+
                 return;
             }
 
             if (instanceIndex >= batch.capacity)
             {
-                Debug.LogError($"[HighwayElementGraphicsSystem] Instance index {instanceIndex} exceeds batch capacity {batch.capacity}.");
+
                 return;
             }
 
             // Validate batch offsets before use
             if (batch.objectToWorldOffset <= 0 || batch.worldToObjectOffset <= 0 || batch.baseColorOffset <= 0)
             {
-                Debug.LogError($"[HighwayElementGraphicsSystem] Invalid batch offsets: owt={batch.objectToWorldOffset}, wto={batch.worldToObjectOffset}, col={batch.baseColorOffset}");
+
                 return;
             }
 

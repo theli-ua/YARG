@@ -260,7 +260,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (!_hasLoggedRemoveExpired)
             {
                 _hasLoggedRemoveExpired = true;
-                Debug.LogError($"[NoteTracker] RemoveExpired: had {_activeCount} active, kept {writeIndex}, removed {_activeCount - writeIndex}. visualTime={visualTime:F2}");
+
             }
         }
 
@@ -285,7 +285,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 if (!_hasLoggedUploadSkip)
                 {
                     _hasLoggedUploadSkip = true;
-                    Debug.LogError($"[NoteTracker] UploadToGPU skipped: graphicsSystem={_graphicsSystem != null}, activeCount={_activeCount}");
+    
                 }
                 return;
             }
@@ -338,7 +338,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
 
             // Diagnostic: log upload completion
-            Debug.Log($"[NoteTracker] UploadToGPU done: {notesWithBatches} colored + metal uploads, {notesWithoutBatches} without batch");
+
 
             // Diagnostic: log batch state every 60 frames when notes active
             if (_uploadFrameCounter++ % 60 == 0 && _activeCount > 0)
@@ -349,7 +349,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                     if (_coloredBatches[i] != null) batchActiveTotal += _coloredBatches[i].activeCount;
                     if (_metalBatches[i] != null) batchActiveTotal += _metalBatches[i].activeCount;
                 }
-                Debug.LogError($"[NoteTracker] Upload: trackerActive={_activeCount}, withBatches={notesWithBatches}, totalBatchActive={batchActiveTotal}");
+
             }
 
             // Flush uploads
