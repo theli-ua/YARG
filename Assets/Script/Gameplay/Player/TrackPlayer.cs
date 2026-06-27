@@ -56,7 +56,7 @@ namespace YARG.Gameplay.Player
         protected HitWindowDisplay HitWindowDisplay;
 
         // Instanced rendering tracker
-        protected NoteTracker NoteTracker;
+        public NoteTracker NoteTracker; // public for benchmark/automation access
 
         [SerializeField]
         private Transform _hudLocation;
