@@ -367,9 +367,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             BatchCullingOutput cullingOutput,
             IntPtr userContext)
         {
-            // TEMP: disable BRG culling entirely to isolate crash
-            if (true) return default;
-
             // Guard against disposal during shutdown
             if (_disposed || _brg == null)
                 return default;
@@ -396,9 +393,10 @@ namespace YARG.Gameplay.Visuals.Instancing
             // Allocate draw command and visibility arrays
             int drawCommandsSize = totalVisible * UnsafeUtility.SizeOf<BatchDrawCommand>();
             int instancesSize = totalVisible * sizeof(int);
+            int alignment = UnsafeUtility.AlignOf<long>();
 
-            void* drawCommandsPtr = UnsafeUtility.Malloc(drawCommandsSize, 4, Allocator.TempJob);
-            void* instancesPtr = UnsafeUtility.Malloc(instancesSize, 4, Allocator.TempJob);
+            void* drawCommandsPtr = UnsafeUtility.Malloc(drawCommandsSize, alignment, Allocator.TempJob);
+            void* instancesPtr = UnsafeUtility.Malloc(instancesSize, alignment, Allocator.TempJob);
 
             int visibleInstanceOffset = 0;
             int drawCommandIndex = 0;
@@ -440,23 +438,21 @@ namespace YARG.Gameplay.Visuals.Instancing
                 Debug.Log($"[BRG] Generated {drawCommandIndex} draw commands, {visibleInstanceOffset} instances from {_batches.Count} batches");
             }
 
-            // Write draw commands to culling output
-            var output = cullingOutput.drawCommands[0];
-            output.drawCommands = (BatchDrawCommand*)drawCommandsPtr;
-            output.drawRanges = (BatchDrawRange*)UnsafeUtility.Malloc(UnsafeUtility.SizeOf<BatchDrawRange>(), 4, Allocator.TempJob);
-            output.drawRanges[0].drawCommandsBegin = 0;
-            output.drawRanges[0].drawCommandsCount = (uint)drawCommandIndex;
-            output.drawRanges[0].filterSettings = new BatchFilterSettings { renderingLayerMask = 0xffffffff };
-            output.drawCommandCount = drawCommandIndex;
-            output.drawRangeCount = 1;
-            output.visibleInstanceCount = visibleInstanceOffset;
-            output.visibleInstances = (int*)instancesPtr;
-            output.instanceSortingPositions = null;
-            output.instanceSortingPositionFloatCount = 0;
-#pragma warning disable CS0618 // drawCommandPickingInstanceIDs is deprecated
-            output.drawCommandPickingInstanceIDs = null;
-#pragma warning restore CS0618
-            cullingOutput.drawCommands[0] = output;
+            // Write draw commands to culling output (use pointer, not struct copy)
+            var drawCmdOutput = (BatchCullingOutputDrawCommands*)cullingOutput.drawCommands.GetUnsafePtr();
+            drawCmdOutput->drawCommands = (BatchDrawCommand*)drawCommandsPtr;
+            drawCmdOutput->drawRanges = (BatchDrawRange*)UnsafeUtility.Malloc(UnsafeUtility.SizeOf<BatchDrawRange>(), UnsafeUtility.AlignOf<long>(), Allocator.TempJob);
+            drawCmdOutput->drawRanges[0].drawCommandsType = BatchDrawCommandType.Direct;
+            drawCmdOutput->drawRanges[0].drawCommandsBegin = 0;
+            drawCmdOutput->drawRanges[0].drawCommandsCount = (uint)drawCommandIndex;
+            drawCmdOutput->drawRanges[0].filterSettings = new BatchFilterSettings { renderingLayerMask = 0xffffffff };
+            drawCmdOutput->drawCommandCount = drawCommandIndex;
+            drawCmdOutput->drawRangeCount = 1;
+            drawCmdOutput->visibleInstanceCount = visibleInstanceOffset;
+            drawCmdOutput->visibleInstances = (int*)instancesPtr;
+            drawCmdOutput->instanceSortingPositions = null;
+            drawCmdOutput->instanceSortingPositionFloatCount = 0;
+            drawCmdOutput->drawCommandPickingEntityIds = null;
 
             return default;
         }
