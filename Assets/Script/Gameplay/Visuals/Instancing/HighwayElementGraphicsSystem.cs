@@ -544,6 +544,13 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return;
             }
 
+            // Validate batch offsets before use
+            if (batch.objectToWorldOffset <= 0 || batch.worldToObjectOffset <= 0 || batch.baseColorOffset <= 0)
+            {
+                Debug.LogError($"[HighwayElementGraphicsSystem] Invalid batch offsets: owt={batch.objectToWorldOffset}, wto={batch.worldToObjectOffset}, col={batch.baseColorOffset}");
+                return;
+            }
+
             // SoA layout: each property has its own contiguous array
             // objectToWorld: 48 bytes per instance (packed float3x4)
             // worldToObject: 48 bytes per instance (packed float3x4)

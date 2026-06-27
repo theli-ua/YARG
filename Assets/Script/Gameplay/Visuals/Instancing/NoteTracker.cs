@@ -337,6 +337,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                 }
             }
 
+            // Diagnostic: log upload completion
+            Debug.Log($"[NoteTracker] UploadToGPU done: {notesWithBatches} colored + metal uploads, {notesWithoutBatches} without batch");
+
             // Diagnostic: log batch state every 60 frames when notes active
             if (_uploadFrameCounter++ % 60 == 0 && _activeCount > 0)
             {
