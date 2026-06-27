@@ -280,6 +280,9 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {
+            // TEMP: disable BRG upload to test if crash is BRG-related
+            if (true) return;
+
             if (_graphicsSystem == null || _activeCount == 0)
             {
                 if (!_hasLoggedUploadSkip)
