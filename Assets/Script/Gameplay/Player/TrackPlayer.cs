@@ -560,6 +560,7 @@ namespace YARG.Gameplay.Player
 
         private void UpdateNotes(double visualTime)
         {
+            int notesBeforeSpawn = NoteTracker?.ActiveCount ?? 0;
             while (NoteIndex < Notes.Count && Notes[NoteIndex].Time <= visualTime + SpawnTimeOffset)
             {
                 var note = Notes[NoteIndex];
@@ -591,6 +592,12 @@ namespace YARG.Gameplay.Player
                 {
                     SpawnNote(child);
                 }
+            }
+            // Diagnostic: log if notes were spawned
+            int notesAfterSpawn = NoteTracker?.ActiveCount ?? 0;
+            if (notesAfterSpawn > notesBeforeSpawn && _gpFrameCounter % 60 == 0)
+            {
+                Debug.LogError($"[TrackPlayer{HighwayIndex}] Spawned {notesAfterSpawn - notesBeforeSpawn} notes, NoteIndex={NoteIndex}/{Notes.Count}, visualTime={visualTime:F2}");
             }
         }
 
@@ -1230,6 +1237,13 @@ namespace YARG.Gameplay.Player
             if (NoteTracker != null)
             {
                 NoteTracker.UpdatePositions();
+
+                // Diagnostic: log activeCount BEFORE RemoveExpired (every 60 frames)
+                if (_gpFrameCounter % 60 == 0)
+                {
+                    Debug.LogError($"[TrackPlayer{HighwayIndex}] Pre-RemoveExpired: active={NoteTracker.ActiveCount}");
+                }
+
                 NoteTracker.RemoveExpired();
                 NoteTracker.UpdateBatchAssignments();
 
