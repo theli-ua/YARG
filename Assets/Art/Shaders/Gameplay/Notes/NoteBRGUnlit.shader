@@ -1,5 +1,5 @@
-// Minimal DOTS Instancing compatible unlit shader for BRG testing
-// Reads unity_ObjectToWorld, unity_WorldToObject, _BaseColor from BRG buffer
+// DOTS Instancing compatible unlit shader for BRG
+// Uses URP's UniversalDOTSInstancing for automatic transform handling
 Shader "YARG/NoteBRGUnlit"
 {
     Properties
@@ -21,10 +21,16 @@ Shader "YARG/NoteBRGUnlit"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile _ DOTS_INSTANCING_ON
+            #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
+            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
+            #pragma multi_compile_fragment _ _RENDER_PASS_ENABLED
             #pragma target 4.5
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UniversalDOTSInstancing.hlsl"
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseMap_ST;
@@ -33,6 +39,13 @@ Shader "YARG/NoteBRGUnlit"
 
             TEXTURE2D(_BaseMap);
             SAMPLER(sampler_BaseMap);
+
+            // DOTS instanced _BaseColor
+            #ifdef UNITY_DOTS_INSTANCING_ENABLED
+                UNITY_DOTS_INSTANCING_START(CustomPropertyMetadata)
+                    UNITY_DOTS_INSTANCED_PROP(float4, _BaseColor)
+                UNITY_DOTS_INSTANCING_END(CustomPropertyMetadata)
+            #endif
 
             struct Attributes
             {
@@ -47,54 +60,14 @@ Shader "YARG/NoteBRGUnlit"
                 float4 positionCS   : SV_POSITION;
             };
 
-            // DOTS instancing: read per-instance properties from BRG buffer
-            struct DOTSInstancingData
-            {
-                float3 objectToWorld0;
-                float3 objectToWorld1;
-                float3 objectToWorld2;
-                float3 objectToWorld3;
-                float3 worldToObject0;
-                float3 worldToObject1;
-                float3 worldToObject2;
-                float3 worldToObject3;
-                float4 baseColor;
-            };
-
-            #if DOTS_INSTANCING_ON
-                UNITY_DECLARE_DOTS_INSTANCED_ARRAY_PROP(DOTSInstancingData, unity_DOTSInstanceData);
-                UNITY_DECLARE_DOTS_INSTANCED_PROP(float3, objectToWorld0);
-                UNITY_DECLARE_DOTS_INSTANCED_PROP(float3, objectToWorld1);
-                UNITY_DECLARE_DOTS_INSTANCED_PROP(float3, objectToWorld2);
-                UNITY_DECLARE_DOTS_INSTANCED_PROP(float3, objectToWorld3);
-                UNITY_DECLARE_DOTS_INSTANCED_PROP(float4, baseColor);
-            #endif
-
             Varyings vert(Attributes input)
             {
                 Varyings output = (Varyings)0;
                 UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
-                // Build object-to-world matrix from DOTS instanced columns
-                #if DOTS_INSTANCING_ON
-                    float3 ow0 = UNITY_ACCESS_DOTS_INSTANCED_PROP(float3, objectToWorld0);
-                    float3 ow1 = UNITY_ACCESS_DOTS_INSTANCED_PROP(float3, objectToWorld1);
-                    float3 ow2 = UNITY_ACCESS_DOTS_INSTANCED_PROP(float3, objectToWorld2);
-                    float3 ow3 = UNITY_ACCESS_DOTS_INSTANCED_PROP(float3, objectToWorld3);
-                    float4x4 objectToWorld = float4x4(
-                        ow0.x, ow1.x, ow2.x, ow3.x,
-                        ow0.y, ow1.y, ow2.y, ow3.y,
-                        ow0.z, ow1.z, ow2.z, ow3.z,
-                        0,     0,     0,     1
-                    );
-                    float4 instanceColor = UNITY_ACCESS_DOTS_INSTANCED_PROP(float4, baseColor);
-                #else
-                    float4x4 objectToWorld = unity_ObjectToWorld;
-                    float4 instanceColor = _BaseColor;
-                #endif
-
-                // Transform position
-                float3 positionWS = mul(objectToWorld, float4(input.positionOS, 1.0)).xyz;
+                // unity_ObjectToWorld is automatically handled by UniversalDOTSInstancing.hlsl
+                float3 positionWS = TransformObjectToWorld(input.positionOS);
                 output.positionCS = TransformWorldToHClip(positionWS);
                 output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
 
@@ -103,20 +76,9 @@ Shader "YARG/NoteBRGUnlit"
 
             half4 frag(Varyings input) : SV_Target
             {
-                #if DOTS_INSTANCING_ON
-                    float3 ow0 = UNITY_ACCESS_DOTS_INSTANCED_PROP(float3, objectToWorld0);
-                    float3 ow1 = UNITY_ACCESS_DOTS_INSTANCED_PROP(float3, objectToWorld1);
-                    float3 ow2 = UNITY_ACCESS_DOTS_INSTANCED_PROP(float3, objectToWorld2);
-                    float3 ow3 = UNITY_ACCESS_DOTS_INSTANCED_PROP(float3, objectToWorld3);
-                    float4x4 objectToWorld = float4x4(
-                        ow0.x, ow1.x, ow2.x, ow3.x,
-                        ow0.y, ow1.y, ow2.y, ow3.y,
-                        ow0.z, ow1.z, ow2.z, ow3.z,
-                        0,     0,     0,     1
-                    );
-                    float4 instanceColor = UNITY_ACCESS_DOTS_INSTANCED_PROP(float4, baseColor);
+                #ifdef UNITY_DOTS_INSTANCING_ENABLED
+                    float4 instanceColor = UNITY_ACCESS_DOTS_INSTANCED_PROP(float4, _BaseColor);
                 #else
-                    float4x4 objectToWorld = unity_ObjectToWorld;
                     float4 instanceColor = _BaseColor;
                 #endif
 
