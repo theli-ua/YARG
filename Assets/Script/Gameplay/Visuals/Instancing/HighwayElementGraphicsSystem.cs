@@ -367,6 +367,9 @@ namespace YARG.Gameplay.Visuals.Instancing
             BatchCullingOutput cullingOutput,
             IntPtr userContext)
         {
+            // Diagnostic: verify callback is being called
+            Debug.Log($"[BRG] OnPerformCulling called: batches={_batches.Count}, disposed={_disposed}");
+
             // Guard against disposal during shutdown
             if (_disposed || _brg == null)
                 return default;
