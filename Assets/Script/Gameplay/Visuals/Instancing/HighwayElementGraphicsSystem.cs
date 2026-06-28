@@ -307,6 +307,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             };
 
             _batches[key] = batch;
+            Debug.Log($"[BRG] Batch created: key={key}, total batches={_batches.Count}");
             return batch;
         }
 
