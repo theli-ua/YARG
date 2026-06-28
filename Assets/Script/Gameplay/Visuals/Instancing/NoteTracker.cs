@@ -170,6 +170,25 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         /// <summary>
+        /// Gets the visible instance indices for a specific batch.
+        /// Returns the actual local indices of active notes in this tracker that belong to the given batch.
+        /// </summary>
+        internal int[] GetVisibleInstancesForBatch(HighwayElementGraphicsSystem.ElementBatch batch)
+        {
+            var indices = new List<int>();
+            for (int i = 0; i < _activeCount; i++)
+            {
+                if (_coloredBatches[i] == batch)
+                    indices.Add(_coloredLocalIndices[i]);
+                else if (_noStarPowerBatches[i] == batch)
+                    indices.Add(_noStarPowerLocalIndices[i]);
+                else if (_metalBatches[i] == batch)
+                    indices.Add(_metalLocalIndices[i]);
+            }
+            return indices.ToArray();
+        }
+
+        /// <summary>
         /// Remove a note by flat index using swap-remove pattern.
         /// </summary>
         internal void Remove(int flatIndex)

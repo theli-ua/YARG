@@ -412,15 +412,48 @@ namespace YARG.Gameplay.Visuals.Instancing
                 if (batch.activeCount <= 0)
                     continue;
 
+                // Find which tracker owns this batch and get actual visible instance indices
+                NoteTracker ownerTracker = null;
+                int[] visibleInstances = null;
+                foreach (var tracker in _trackers)
+                {
+                    if (tracker is NoteTracker nt)
+                    {
+                        var indices = nt.GetVisibleInstancesForBatch(batch);
+                        if (indices.Length > 0)
+                        {
+                            ownerTracker = nt;
+                            visibleInstances = indices;
+                            break;
+                        }
+                    }
+                }
+
+                if (visibleInstances == null)
+                {
+                    // Fallback: use [0, 1, 2, ...] (shouldn't happen in normal operation)
+                    visibleInstances = new int[batch.activeCount];
+                    for (int i = 0; i < batch.activeCount; i++)
+                        visibleInstances[i] = i;
+                }
+
+                // Compute splitVisibilityMask based on actual visible count (Bug 1 fix)
+                // splitVisibilityMask is ushort in BatchDrawCommand — cap at 16 bits
+                ushort splitVisibilityMask;
+                if (visibleInstances.Length >= 16)
+                    splitVisibilityMask = 0xffff;
+                else
+                    splitVisibilityMask = (ushort)((1 << visibleInstances.Length) - 1);
+
                 var cmd = new BatchDrawCommand
                 {
                     batchID = batch.batchID,
                     materialID = batch.materialID,
                     meshID = batch.meshID,
                     submeshIndex = (ushort)batch.submeshIndex,
-                    visibleCount = (uint)batch.activeCount,
+                    visibleCount = (uint)visibleInstances.Length,
                     visibleOffset = (uint)visibleInstanceOffset,
-                    splitVisibilityMask = 0xff,
+                    splitVisibilityMask = splitVisibilityMask,
                     flags = 0,
                     sortingPosition = 0
                 };
@@ -428,19 +461,33 @@ namespace YARG.Gameplay.Visuals.Instancing
                 UnsafeUtility.WriteArrayElement(drawCommandsPtr, drawCommandIndex, cmd);
                 drawCommandIndex++;
 
-                // Fill visibility instances (0..activeCount-1)
-                for (int i = 0; i < batch.activeCount; i++)
+                // Copy actual visible instance indices (Bug 2 fix — not [0,1,2,...])
+                for (int i = 0; i < visibleInstances.Length; i++)
                 {
-                    UnsafeUtility.WriteArrayElement(instancesPtr, visibleInstanceOffset + i, i);
+                    UnsafeUtility.WriteArrayElement(instancesPtr, visibleInstanceOffset + i, visibleInstances[i]);
                 }
-                visibleInstanceOffset += batch.activeCount;
+                visibleInstanceOffset += visibleInstances.Length;
             }
 
-            // Diagnostic: log draw commands once
+            // Diagnostic: log draw commands once with visible instance details
             if (!_hasLoggedDrawCommands)
             {
                 _hasLoggedDrawCommands = true;
-
+                var batchDetails = string.Join("; ", _batches.Values.Where(b => b.activeCount > 0).Select(b =>
+                {
+                    int cnt = 0;
+                    foreach (var t in _trackers)
+                    {
+                        if (t is NoteTracker nt)
+                        {
+                            var vi = nt.GetVisibleInstancesForBatch(b);
+                            cnt = vi.Length;
+                            break;
+                        }
+                    }
+                    return $"active={b.activeCount},visible={cnt}";
+                }));
+                Debug.Log($"[BRG] Draw commands: {drawCommandIndex} batches, total visible={visibleInstanceOffset}, details=[{batchDetails}]");
             }
 
             // Write draw commands to culling output (use pointer, not struct copy)
