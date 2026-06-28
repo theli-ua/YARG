@@ -48,3 +48,6 @@ BRG culling callback fires (8,277 calls), batches created (2), notes spawn (acti
 - Previous successful run (Player-prev.log) was likely run interactively
 - BRG code changes are complete and compile successfully
 - Verification requires interactive Unity session or CI environment
+- **Found**: URP asset has GPUResidentDrawerResources configured (BRG enabled)
+- **Found**: Shader metadata name fixed (CustomPropertyMetadata → MaterialPropertyMetadata)
+- **Found**: All BRG API usage matches Unity documentation (Allocator.TempJob, metadata format, etc.)
