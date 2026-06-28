@@ -12,11 +12,13 @@ Shader "HighwaysAlphaMask"
             Cull Off
             ColorMask A
             Blend One One
-            BlendOp Min
+            BlendOp Max
 
             HLSLPROGRAM
+            #pragma target 4.5
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile _ DOTS_INSTANCING_ON
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Assets/Art/Shaders/highways.hlsl"
 

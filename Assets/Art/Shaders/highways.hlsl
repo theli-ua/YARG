@@ -5,6 +5,10 @@
 
 uniform int _YargHighwaysN;
 
+#ifdef UNITY_DOTS_INSTANCING_ENABLED
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UniversalDOTSInstancing.hlsl"
+#endif
+
 // Single interleaved buffer: [index*3+0]=view, [index*3+1]=invView, [index*3+2]=proj
 StructuredBuffer<float4x4> _YargCamMatrices;
 StructuredBuffer<float> _YargCurveFactors;
@@ -165,6 +169,11 @@ inline float4 YargTransformWorldToHClip(float3 positionWS)
 // Tranforms position from object to homogenous space
 inline float4 YargObjectToClipPos( in float3 pos )
 {
+#ifdef UNITY_DOTS_INSTANCING_ENABLED
+    // DOTS instancing: UNITY_DOTS_MATRIX_M converts float3x4 to float4x4
+    return YargTransformWorldToHClip(mul(UNITY_DOTS_MATRIX_M, float4(pos, 1.0)).xyz);
+#else
     return YargTransformWorldToHClip(mul(unity_ObjectToWorld, float4(pos, 1.0)).xyz);
+#endif
 }
 #endif
