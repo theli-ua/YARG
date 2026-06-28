@@ -42,8 +42,9 @@ BRG culling callback fires (8,277 calls), batches created (2), notes spawn (acti
 ❌ Cannot run - Unity editor stuck in batch mode, doesn't enter play mode with `-automation` flag. Project loads successfully but automation never starts. This appears to be a pre-existing environment issue.
 
 ### Next Steps
-- **BLOCKED**: Unity batch mode cannot enter play mode without a display
-- Tested: `-quit`, `-nographics`, `-benchmark`, `-automation`, `-executeMethod` - all fail to enter play mode
-- Previous successful run (Player-prev.log) likely had a display available
+- **BLOCKED**: Unity batch mode cannot enter play mode even with display available
+- Tested: `-quit`, `-nographics`, `-benchmark`, `-automation`, `-executeMethod`, Xdummy, xdotool
+- All fail because Unity batch mode requires user interaction to enter play mode
+- Previous successful run (Player-prev.log) was likely run interactively
 - BRG code changes are complete and compile successfully
-- Verification requires running Unity with display (not possible in this environment)
+- Verification requires interactive Unity session or CI environment
