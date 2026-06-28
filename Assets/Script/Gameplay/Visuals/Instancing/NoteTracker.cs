@@ -90,6 +90,7 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             // Look up render groups from ThemeMeshCache
             var renderData = ThemeMeshCache.GetRenderGroups(_themeName, spawnData.noteType, spawnData.isStarPowerVisible);
+            Debug.Log($"[NoteTracker] GetRenderGroups: theme={_themeName}, type={spawnData.noteType}, sp={spawnData.isStarPowerVisible}, colored={renderData.Colored?.Length ?? 0}, noSP={renderData.NoStarPower?.Length ?? 0}, metal={renderData.Metal?.Length ?? 0}");
 
             // Colored batch
             if (renderData.Colored != null && renderData.Colored.Length > 0)
