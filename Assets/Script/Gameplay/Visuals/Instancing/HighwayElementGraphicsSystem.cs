@@ -171,6 +171,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (_disposed)
                 return;
 
+            Debug.Log($"[BRG] Dispose called! batches before={_batches.Count}");
             _disposed = true;
 
             if (_brg != null)
