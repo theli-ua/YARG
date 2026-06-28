@@ -71,6 +71,9 @@ Offset 64+96N: baseColor array (16 bytes × capacity)
 | Disposal guards in culling/upload | `HighwayElementGraphicsSystem.cs` | No shutdown crashes |
 | `DOTS_INSTANCING_ON` shader with URP macros | `Assets/Art/Shaders/Gameplay/Notes/NoteBRGUnlit.shader` | DOTS-compatible shader created |
 | Swap materials to DOTS shader | `ThemeMeshCache.cs` | Test shader active |
+| Fix DOTS block name: Custom→MaterialPropertyMetadata | `NoteBRGUnlit.shader` | **Shader now reads per-instance _BaseColor** |
+| Add property caching pattern from UnlitInput.hlsl | `NoteBRGUnlit.shader` | **Correct DOTS instancing access** |
+| Expose BRG getter + assign to camera | `HighwayElementGraphicsSystem.cs`, `HighwayCameraRendering.cs` | **BRG committed to render camera** |
 
 ### 🟡 Partially Working
 
@@ -83,12 +86,12 @@ Offset 64+96N: baseColor array (16 bytes × capacity)
 | Draw commands in Frame Debugger | ❌ **ZERO draw commands visible** |
 | Batches persist 100% of frames | ❌ Only 78% (22% show batches=0, but Dispose NOT called) |
 
-### ❌ Not Working
+### ❌ Not Working (Pre-Fix)
 
-| Issue | Evidence |
-|-------|----------|
-| Notes not rendering | Frame Debugger shows zero draw commands |
-| Batches=0 for 22% of frames | Unexplained — `Dispose()` never called, `_batches.Clear()` only in Dispose |
+| Issue | Evidence | Status |
+|-------|----------|--------|
+| Notes not rendering | Frame Debugger shows zero draw commands | **FIXED?** — awaiting build verification |
+| Batches=0 for 22% of frames | Unexplained — `Dispose()` never called, `_batches.Clear()` only in Dispose | **FIXED?** — awaiting build verification |
 
 ---
 
@@ -119,14 +122,34 @@ Offset 64+96N: baseColor array (16 bytes × capacity)
 
 ---
 
-## Current Hypothesis
+## Root Causes Found (2026-06-28)
 
-Draw commands are generated in the culling callback but **not submitted to the GPU**. Possible causes:
+### Root Cause 1: Shader uses invalid DOTS instancing block name
 
-1. **Draw commands malformed** — silently dropped by Unity's native renderer
-2. **BRG not integrated with URP render pipeline** — draw commands generated but never submitted
-3. **Shader not actually reading DOTS data** — despite macros, the shader may fall back to default values (identity transform = position 0,0,0)
-4. **Shader property name mismatch** — metadata uses `unity_ObjectToWorld` but shader expects different property name
+**File**: `Assets/Art/Shaders/Gameplay/Notes/NoteBRGUnlit.shader`
+
+The shader used `CustomPropertyMetadata` as the DOTS instancing block name. Unity only recognizes three block names:
+- `BuiltinPropertyMetadata` — for `unity_ObjectToWorld`, `unity_WorldToObject`
+- `MaterialPropertyMetadata` — for material properties like `_BaseColor`
+- `UserPropertyMetadata` — for custom user properties
+
+**Fix**: Changed `CustomPropertyMetadata` → `MaterialPropertyMetadata`. Also added property caching pattern from URP's `UnlitInput.hlsl` reference, removed unnecessary `Lighting.hlsl` include and extra multi_compile pragmas.
+
+### Root Cause 2: BRG never assigned to camera
+
+**File**: `Assets/Script/Gameplay/Visuals/HighwayCameraRendering.cs`
+
+The `BatchRendererGroup` was created but never assigned to `_renderCamera.batchRendererGroup`. While `SetEnabledViewTypes(Camera)` makes the culling callback fire, the draw commands may not be committed to the Frame Debugger or the correct render target without explicit camera association.
+
+**Fix**: Added `_renderCamera.batchRendererGroup = _graphicsSystem.BatchRendererGroup` after `OnCreate()`. Exposed `BatchRendererGroup` getter in `HighwayElementGraphicsSystem`.
+
+### Additional Issues Found (not yet fixed)
+
+| Issue | File | Severity |
+|-------|------|----------|
+| `SparseUploader.AddUploadDirect` source offset always 0 | `SparseUploader.cs:249` | Low (latent) |
+| Shader swap creates new material, may lose emission props | `ThemeMeshCache.cs:107-114` | Medium |
+| BRG disposed on scene unload, gameplay loop may still run | `HighwayCameraRendering.cs:437-463` | High |
 
 ---
 
@@ -164,9 +187,9 @@ Log location: `~/.config/unity3d/YARC/YARG/Player.log`
 
 ## Next Steps
 
-1. Verify draw command generation vs submission — add diagnostic in culling callback that logs draw command contents
-2. Check if shader actually reads DOTS data — try rendering with hardcoded color (no DOTS dependency)
-3. Verify BRG integration with URP — check if `GPUResidentDrawer` or similar is needed
-4. Test with original Shader Graph materials (rename `_Color` → `_BaseColor`, enable instancing)
-5. If draw commands reach GPU but shader ignores them → fix shader
-6. If draw commands never reach GPU → fix BRG integration
+1. **VERIFY**: Build and run benchmark — check if draw commands appear in Frame Debugger
+2. **IF STILL NOT RENDERING**: Check if `DOTS_INSTANCING_ON` shader variant is actually generated (material may need `enableInstancing = true`)
+3. **IF STILL NOT RENDERING**: Check if highway camera's `targetTexture` prevents BRG rendering (BRG may render to main camera, not offscreen RT)
+4. **IF RENDERING BUT WRONG**: Debug transform/color — verify packed matrices and _BaseColor values
+5. **FIX**: Address remaining issues (SparseUploader offset, emission props, scene unload)
+6. **VERIFY**: Full benchmark with all instruments

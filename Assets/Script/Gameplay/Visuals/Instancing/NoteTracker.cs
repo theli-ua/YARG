@@ -96,7 +96,9 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (renderData.Colored != null && renderData.Colored.Length > 0)
             {
                 var group = renderData.Colored[0];
+                Debug.Log($"[NoteTracker] Calling GetOrCreateBatch: graphicsSystem={_graphicsSystem != null}, mesh={group.Mesh != null}, material={group.Material != null}, graphicsSystemHash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_graphicsSystem)}");
                 var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                Debug.Log($"[NoteTracker] GetOrCreateBatch result: batch={batch != null}");
                 if (batch != null)
                 {
                     _coloredBatches[index] = batch;

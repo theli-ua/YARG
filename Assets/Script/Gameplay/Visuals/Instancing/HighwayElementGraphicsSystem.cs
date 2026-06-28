@@ -30,6 +30,9 @@ namespace YARG.Gameplay.Visuals.Instancing
     internal class HighwayElementGraphicsSystem : IDisposable
     {
         private BatchRendererGroup _brg;
+
+        /// <summary>Gets the underlying BatchRendererGroup for camera assignment.</summary>
+        internal BatchRendererGroup BatchRendererGroup => _brg;
         private GraphicsBuffer _gpuBuffer;
         private GraphicsBufferHandle _gpuBufferHandle;
         private HeapAllocator _heapAllocator;
@@ -54,7 +57,6 @@ namespace YARG.Gameplay.Visuals.Instancing
         private const int ZeroMatrixSize = 64; // float4x4 at offset 0
 
         private bool _disposed;
-
 
         #region ElementBatch (Task 2.2)
 
@@ -124,6 +126,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal void OnCreate()
         {
+            Debug.Log("[BRG] OnCreate called");
             // Check if API uses ConstantBuffer or RawBuffer
             bool useConstantBuffer = BatchRendererGroup.BufferTarget == BatchBufferTarget.ConstantBuffer;
             var bufferTarget = useConstantBuffer
@@ -308,7 +311,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             };
 
             _batches[key] = batch;
-            Debug.Log($"[BRG] Batch created: key={key}, total batches={_batches.Count}");
+            Debug.Log($"[BRG] Batch created: key={key}, total batches={_batches.Count}, this={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this)}");
             return batch;
         }
 
@@ -370,7 +373,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             IntPtr userContext)
         {
             // Diagnostic: verify callback is being called
-            Debug.Log($"[BRG] OnPerformCulling called: batches={_batches.Count}, disposed={_disposed}");
+            Debug.Log($"[BRG] OnPerformCulling called: batches={_batches.Count}, disposed={_disposed}, this={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this)}");
 
             // Guard against disposal during shutdown
             if (_disposed || _brg == null)

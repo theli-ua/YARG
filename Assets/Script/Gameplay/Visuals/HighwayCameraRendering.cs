@@ -127,6 +127,10 @@ namespace YARG.Gameplay.Visuals
             // HighwayElementGraphicsSystem integration
             _graphicsSystem = new HighwayElementGraphicsSystem();
             _graphicsSystem.OnCreate();
+            GameManager.HighwayElementGraphicsSystemRef = _graphicsSystem;
+
+            // Note: Camera.batchRendererGroup property not available in this Unity version.
+            // BRG is registered with the render pipeline automatically when created.
         }
 
         private void ResetCameras()
@@ -435,11 +439,14 @@ namespace YARG.Gameplay.Visuals
 
         private void OnDisable()
         {
+            Debug.Log("[HighwayCameraRendering] OnDisable called");
             if (_graphicsSystem != null)
             {
                 _graphicsSystem.Dispose();
                 _graphicsSystem = null;
             }
+            if (GameManager.HighwayElementGraphicsSystemRef == _graphicsSystem)
+                GameManager.HighwayElementGraphicsSystemRef = null;
 
             RenderPipelineManager.beginCameraRendering -= OnPreCameraRender;
             SceneManager.sceneUnloaded -= OnSceneUnloaded;
