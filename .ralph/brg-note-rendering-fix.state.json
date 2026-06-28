@@ -1,7 +1,7 @@
 {
   "name": "brg-note-rendering-fix",
   "taskFile": ".ralph/brg-note-rendering-fix.md",
-  "iteration": 1,
+  "iteration": 2,
   "maxIterations": 50,
   "itemsPerIteration": 1,
   "reflectEvery": 5,

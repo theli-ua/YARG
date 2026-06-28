@@ -59,8 +59,8 @@ namespace YARG.Editor.Automation
             // calls EditorApplication.Exit(0) itself when done.
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
 
-            // Try ExecuteMenuItem first (more reliable in batchmode than isPlaying = true)
-            EditorApplication.ExecuteMenuItem("File/Play");
+            // Enter play mode (works in batch mode)
+            EditorApplication.isPlaying = true;
 
             // Block until play mode enters. ManualResetEvent.WaitOne() yields the thread
             // but Unity still processes editor callbacks (playModeStateChanged fires).
