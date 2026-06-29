@@ -126,7 +126,6 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal void OnCreate()
         {
-            Debug.Log("[BRG] OnCreate called");
             // Check if API uses ConstantBuffer or RawBuffer
             bool useConstantBuffer = BatchRendererGroup.BufferTarget == BatchBufferTarget.ConstantBuffer;
             var bufferTarget = useConstantBuffer
@@ -174,7 +173,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (_disposed)
                 return;
 
-            Debug.Log($"[BRG] Dispose called! batches before={_batches.Count}");
             _disposed = true;
 
             if (_brg != null)
@@ -311,7 +309,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             };
 
             _batches[key] = batch;
-            Debug.Log($"[BRG] Batch created: key={key}, total batches={_batches.Count}, this={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this)}");
             return batch;
         }
 
@@ -372,9 +369,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             BatchCullingOutput cullingOutput,
             IntPtr userContext)
         {
-            // Diagnostic: verify callback is being called
-            Debug.Log($"[BRG] OnPerformCulling called: batches={_batches.Count}, disposed={_disposed}, this={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this)}");
-
             // Guard against disposal during shutdown
             if (_disposed || _brg == null)
                 return default;
@@ -387,16 +381,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
 
             if (totalVisible == 0)
-            {
-                // Diagnostic: log batch details periodically
-                _cullFrameCounter++;
-                if (_cullFrameCounter % 60 == 0 && _batches.Count > 0)
-                {
-                    var details = string.Join(", ", _batches.Values.Select(b => $"active={b.activeCount},cap={b.capacity}"));
-
-                }
                 return default;
-            }
 
             // Allocate draw command and visibility arrays
             int drawCommandsSize = totalVisible * UnsafeUtility.SizeOf<BatchDrawCommand>();
@@ -470,27 +455,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                     UnsafeUtility.WriteArrayElement(instancesPtr, visibleInstanceOffset + i, visibleInstances[i]);
                 }
                 visibleInstanceOffset += visibleInstances.Length;
-            }
-
-            // Diagnostic: log draw commands once with visible instance details
-            if (!_hasLoggedDrawCommands)
-            {
-                _hasLoggedDrawCommands = true;
-                var batchDetails = string.Join("; ", _batches.Values.Where(b => b.activeCount > 0).Select(b =>
-                {
-                    int cnt = 0;
-                    foreach (var t in _trackers)
-                    {
-                        if (t is NoteTracker nt)
-                        {
-                            var vi = nt.GetVisibleInstancesForBatch(b);
-                            cnt = vi.Length;
-                            break;
-                        }
-                    }
-                    return $"active={b.activeCount},visible={cnt}";
-                }));
-                Debug.Log($"[BRG] Draw commands: {drawCommandIndex} batches, total visible={visibleInstanceOffset}, details=[{batchDetails}]");
             }
 
             // Write draw commands to culling output (use pointer, not struct copy)

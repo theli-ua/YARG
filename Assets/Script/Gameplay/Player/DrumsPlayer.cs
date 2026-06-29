@@ -19,6 +19,7 @@ using YARG.Menu.HighwayConfiguration;
 using YARG.Player;
 using YARG.Settings;
 using YARG.Themes;
+using YARG.Gameplay.Visuals.Instancing;
 using static YARG.Core.Game.ColorProfile;
 
 namespace YARG.Gameplay.Player
@@ -984,6 +985,84 @@ namespace YARG.Gameplay.Player
             }
 
             ResetLastHitTimes();
+        }
+
+      // ---- Instanced rendering overrides ----
+
+        private static float ComputeElementX(float index, int subdivisions)
+        {
+            return TrackPlayer.TRACK_WIDTH / subdivisions * (index + 1f) - TrackPlayer.TRACK_WIDTH / 2f - 1f / subdivisions;
+        }
+
+        protected override NoteData CreateNoteData(DrumNote note)
+        {
+            var orderingInfo = GetHighwayOrderingInfo(note.Pad);
+            UnityEngine.Color colorNoStarPower, color, metalColor;
+
+            if (!_fiveLaneMode)
+            {
+                var c = Player.ColorProfile.FourLaneDrums;
+                colorNoStarPower = c.GetNoteColor(orderingInfo.ColorIndex).ToUnityColor();
+                color = note.IsStarPower ? c.GetNoteStarPowerColor(orderingInfo.ColorIndex).ToUnityColor() : colorNoStarPower;
+                metalColor = c.GetMetalColor(note.IsStarPower).ToUnityColor();
+            }
+            else
+            {
+                var c = Player.ColorProfile.FiveLaneDrums;
+                colorNoStarPower = c.GetNoteColor(orderingInfo.ColorIndex).ToUnityColor();
+                color = note.IsStarPower ? c.GetNoteStarPowerColor(orderingInfo.ColorIndex).ToUnityColor() : colorNoStarPower;
+                metalColor = c.GetMetalColor(note.IsStarPower).ToUnityColor();
+            }
+
+            return new NoteData
+            {
+                color = color,
+                colorNoStarPower = colorNoStarPower,
+                metalColor = metalColor,
+                highwayIndex = HighwayIndex,
+                randomFloat = UnityEngine.Random.Range(-1f, 1f),
+                randomVector = new Vector2(UnityEngine.Random.Range(-1f, 1f), UnityEngine.Random.Range(-1f, 1f)),
+                packedFlags = NoteData.PackFlags(
+                    DrumPadToThemeNoteType(note.Pad),
+                    note.IsStarPower,
+                    false, // Drums don't have sustain
+                    false)
+            };
+        }
+
+        protected override NoteSpawnData CreateNoteSpawnData(DrumNote note)
+        {
+            var orderingInfo = GetHighwayOrderingInfo(note.Pad);
+            int position = orderingInfo.Position;
+
+            // Kick notes (pad 0) without dedicated lanes: center position
+            bool kickHasLane = NumberOfDedicatedKickLanes > 0;
+            if (note.Pad == (int)FourLaneDrumPad.Kick && !kickHasLane)
+            {
+                position = LaneCount / 2;
+            }
+
+            return new NoteSpawnData
+            {
+                noteHitTime = (float)note.Time,
+                baseX = ComputeElementX(position, LaneCount),
+                noteHeight = Player.HighwayPreset.NoteHeight,
+                noteType = DrumPadToThemeNoteType(note.Pad),
+                isStarPowerVisible = note.IsStarPower
+            };
+        }
+
+        private static ThemeNoteType DrumPadToThemeNoteType(int pad)
+        {
+            // Map drum pads to theme note types
+            if (pad == (int)FourLaneDrumPad.Wildcard || pad == (int)FiveLaneDrumPad.Wildcard)
+                return ThemeNoteType.Wildcard;
+            if (pad == (int)FourLaneDrumPad.Kick || pad == (int)FiveLaneDrumPad.Kick)
+                return ThemeNoteType.Kick;
+            // Cymbals map to cymbal theme type
+            if (pad is (int)FourLaneDrumPad.YellowCymbal or (int)FourLaneDrumPad.BlueCymbal or (int)FourLaneDrumPad.GreenCymbal)
+                return ThemeNoteType.Cymbal;
+            return ThemeNoteType.Normal;
         }
 
         public enum DrumsBreLaneIndex

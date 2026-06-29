@@ -13,7 +13,9 @@ using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Gameplay.Visuals;
+using YARG.Gameplay.Visuals.Instancing;
 using YARG.Helpers.Extensions;
+using YARG.Themes;
 
 namespace YARG.Gameplay.Player
 {
@@ -802,6 +804,58 @@ namespace YARG.Gameplay.Player
             }
 
             return _currentIndex + 1;
+        }
+
+  // ---- Instanced rendering overrides ----
+
+        protected override NoteData CreateNoteData(ProKeysNote note)
+        {
+            var colors = Player.ColorProfile.ProKeys;
+
+            // ProKeys: color based on white/black key
+            bool isWhiteKey = ProKeysUtilities.IsWhiteKey(note.Key % 12);
+            var colorNoStarPower = isWhiteKey ? colors.WhiteNote : colors.BlackNote;
+            var color = note.IsStarPower
+                ? (isWhiteKey ? colors.WhiteNoteStarPower : colors.BlackNoteStarPower)
+                : colorNoStarPower;
+            var metalColor = colors.GetMetalColor(note.IsStarPower);
+
+            return new NoteData
+            {
+                color = color.ToUnityColor(),
+                colorNoStarPower = colorNoStarPower.ToUnityColor(),
+                metalColor = metalColor.ToUnityColor(),
+                highwayIndex = HighwayIndex,
+                randomFloat = UnityEngine.Random.Range(-1f, 1f),
+                randomVector = new Vector2(UnityEngine.Random.Range(-1f, 1f), UnityEngine.Random.Range(-1f, 1f)),
+                packedFlags = NoteData.PackFlags(
+                    ProKeysKeyToThemeNoteType(note.Key, note.ProKeysFlags),
+                    note.IsStarPower,
+                    note.IsSustain,
+                    false)
+            };
+        }
+
+        protected override NoteSpawnData CreateNoteSpawnData(ProKeysNote note)
+        {
+            // X position from keys array, with range shift offset applied
+            float baseX = GetNoteX(note.Key);
+
+            return new NoteSpawnData
+            {
+                noteHitTime = (float)note.Time,
+                baseX = baseX,
+                noteHeight = Player.HighwayPreset.NoteHeight,
+                noteType = ProKeysKeyToThemeNoteType(note.Key, note.ProKeysFlags),
+                isStarPowerVisible = note.IsStarPower
+            };
+        }
+
+        private static ThemeNoteType ProKeysKeyToThemeNoteType(int key, ProKeysNoteFlags flags)
+        {
+            if ((flags & ProKeysNoteFlags.Glissando) != 0)
+                return ThemeNoteType.Glissando;
+            return ProKeysUtilities.IsWhiteKey(key % 12) ? ThemeNoteType.White : ThemeNoteType.Black;
         }
 
         private int GetLeftmostWhiteKeyAtTime(double time)

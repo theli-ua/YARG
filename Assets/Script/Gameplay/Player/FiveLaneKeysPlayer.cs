@@ -21,6 +21,7 @@ using YARG.Helpers.Extensions;
 using YARG.Playback;
 using YARG.Player;
 using YARG.Themes;
+using YARG.Gameplay.Visuals.Instancing;
 using static YARG.Core.Engine.Keys.FiveLaneKeysEngine;
 
 namespace YARG.Assets.Script.Gameplay.Player
@@ -868,6 +869,86 @@ public override bool ShouldUpdateInputsOnResume => true;
                     { _highwayOrdering[(int)FiveFretGuitarFret.Orange], FiveLaneKeysBreLaneIndex.Orange },
                 };
             }
+        }
+
+     // ---- Instanced rendering overrides ----
+
+        private static float ComputeElementX(float index, int subdivisions)
+        {
+            return TrackPlayer.TRACK_WIDTH / subdivisions * (index + 1f) - TrackPlayer.TRACK_WIDTH / 2f - 1f / subdivisions;
+        }
+
+        protected override NoteData CreateNoteData(GuitarNote note)
+        {
+            var colors = Player.ColorProfile.FiveFretGuitar;
+
+            // FiveLaneKeys: metalColor uses NoteRef.IsStarPower (constant, not dynamic)
+            var colorNoStarPower = colors.GetNoteColor(note.Fret);
+            var color = note.IsStarPower ? colors.GetNoteStarPowerColor(note.Fret) : colorNoStarPower;
+            var metalColor = colors.GetMetalColor(note.IsStarPower); // Constant for FiveLaneKeys
+
+            return new NoteData
+            {
+                color = color.ToUnityColor(),
+                colorNoStarPower = colorNoStarPower.ToUnityColor(),
+                metalColor = metalColor.ToUnityColor(),
+                highwayIndex = HighwayIndex,
+                randomFloat = UnityEngine.Random.Range(-1f, 1f),
+                randomVector = new Vector2(UnityEngine.Random.Range(-1f, 1f), UnityEngine.Random.Range(-1f, 1f)),
+                packedFlags = NoteData.PackFlags(
+                    GuitarNoteTypeToThemeNoteType(note.Type, note.Fret),
+                    note.IsStarPower,
+                    note.IsSustain,
+                    note.Fret == (int)FiveFretGuitarFret.Open)
+            };
+        }
+
+        protected override NoteSpawnData CreateNoteSpawnData(GuitarNote note)
+        {
+            int lane;
+            bool isOpenOrWildcard = note.Fret == (int)FiveFretGuitarFret.Open || note.Fret == (int)FiveFretGuitarFret.Wildcard;
+
+            if (!isOpenOrWildcard)
+            {
+                lane = GetLanePosition((FiveFretGuitarFret)note.Fret);
+            }
+            else
+            {
+                lane = (LaneCount - 1) / 2;
+            }
+
+            // Scale: FiveLaneKeys uses reduced scale when not using open lane
+            float scale = 1f;
+            if (!UsingOpenLane && !isOpenOrWildcard)
+            {
+                scale = 5f / 6f;
+            }
+
+            return new NoteSpawnData
+            {
+                noteHitTime = (float)note.Time,
+                baseX = ComputeElementX(lane, LaneCount),
+                noteHeight = Player.HighwayPreset.NoteHeight * scale,
+                noteType = GuitarNoteTypeToThemeNoteType(note.Type, note.Fret),
+                isStarPowerVisible = note.IsStarPower
+            };
+        }
+
+        private static ThemeNoteType GuitarNoteTypeToThemeNoteType(GuitarNoteType noteType, int fret)
+        {
+            bool isOpen = fret == (int)FiveFretGuitarFret.Open;
+            bool isWildcard = fret == (int)FiveFretGuitarFret.Wildcard;
+
+            if (isWildcard)
+                return ThemeNoteType.Wildcard;
+
+            return noteType switch
+            {
+                GuitarNoteType.Strum => isOpen ? ThemeNoteType.Open : ThemeNoteType.Normal,
+                GuitarNoteType.Hopo  => isOpen ? ThemeNoteType.OpenHOPO : ThemeNoteType.HOPO,
+                GuitarNoteType.Tap   => isOpen ? ThemeNoteType.OpenHOPO : ThemeNoteType.Tap,
+                _                    => ThemeNoteType.Normal
+            };
         }
 
         private bool ShouldUseOpenLane()

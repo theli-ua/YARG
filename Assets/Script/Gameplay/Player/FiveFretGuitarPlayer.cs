@@ -19,6 +19,7 @@ using YARG.Playback;
 using YARG.Player;
 using YARG.Settings;
 using YARG.Themes;
+using YARG.Gameplay.Visuals.Instancing;
 using static YARG.Core.Game.ColorProfile;
 using Random = UnityEngine.Random;
 
@@ -864,6 +865,84 @@ namespace YARG.Gameplay.Player
             {
                 _lanePositions = DEFAULT_HIGHWAY_ORDERING;
             }
+        }
+
+       // ---- Instanced rendering overrides ----
+
+        private static float ComputeElementX(float index, int subdivisions)
+        {
+            return TrackPlayer.TRACK_WIDTH / subdivisions * (index + 1f) - TrackPlayer.TRACK_WIDTH / 2f - 1f / subdivisions;
+        }
+
+        protected override NoteData CreateNoteData(GuitarNote note)
+        {
+            var colors = Player.ColorProfile.FiveFretGuitar;
+
+            // colorNoStarPower: always the fret color (no SP)
+            var colorNoStarPower = colors.GetNoteColor(note.Fret);
+
+            // color: SP-aware (dynamic — may change if SP activates/deactivates)
+            var color = note.IsStarPower ? colors.GetNoteStarPowerColor(note.Fret) : colorNoStarPower;
+
+            // metalColor: uses IsStarPowerVisible (dynamic for guitar)
+            var metalColor = colors.GetMetalColor(note.IsStarPower);
+
+            return new NoteData
+            {
+                color = color.ToUnityColor(),
+                colorNoStarPower = colorNoStarPower.ToUnityColor(),
+                metalColor = metalColor.ToUnityColor(),
+                highwayIndex = HighwayIndex,
+                randomFloat = Random.Range(-1f, 1f),
+                randomVector = new Vector2(Random.Range(-1f, 1f), Random.Range(-1f, 1f)),
+                packedFlags = NoteData.PackFlags(
+                    GuitarNoteTypeToThemeNoteType(note.Type, note.Fret),
+                    note.IsStarPower,
+                    note.IsSustain,
+                    note.Fret == (int)FiveFretGuitarFret.Open)
+            };
+        }
+
+        protected override NoteSpawnData CreateNoteSpawnData(GuitarNote note)
+        {
+            int lane;
+            bool isOpenOrWildcard = note.Fret == (int)FiveFretGuitarFret.Open || note.Fret == (int)FiveFretGuitarFret.Wildcard;
+
+            if (!isOpenOrWildcard)
+            {
+                lane = GetLanePosition((FiveFretGuitarFret)note.Fret);
+            }
+            else
+            {
+                lane = (LANE_COUNT - 1) / 2; // Center for open/wildcard
+            }
+
+            return new NoteSpawnData
+            {
+                noteHitTime = (float)note.Time,
+                baseX = ComputeElementX(lane, LANE_COUNT),
+                noteHeight = Player.HighwayPreset.NoteHeight,
+                noteType = GuitarNoteTypeToThemeNoteType(note.Type, note.Fret),
+                isStarPowerVisible = note.IsStarPower
+            };
+        }
+
+        private static ThemeNoteType GuitarNoteTypeToThemeNoteType(GuitarNoteType noteType, int fret)
+        {
+            // Open notes use Open/OpenHOPO theme types
+            bool isOpen = fret == (int)FiveFretGuitarFret.Open;
+            bool isWildcard = fret == (int)FiveFretGuitarFret.Wildcard;
+
+            if (isWildcard)
+                return ThemeNoteType.Wildcard;
+
+            return noteType switch
+            {
+                GuitarNoteType.Strum => isOpen ? ThemeNoteType.Open : ThemeNoteType.Normal,
+                GuitarNoteType.Hopo  => isOpen ? ThemeNoteType.OpenHOPO : ThemeNoteType.HOPO,
+                GuitarNoteType.Tap   => isOpen ? ThemeNoteType.OpenHOPO : ThemeNoteType.Tap,
+                _                    => ThemeNoteType.Normal
+            };
         }
     }
 }

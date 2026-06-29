@@ -90,15 +90,12 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             // Look up render groups from ThemeMeshCache
             var renderData = ThemeMeshCache.GetRenderGroups(_themeName, spawnData.noteType, spawnData.isStarPowerVisible);
-            Debug.Log($"[NoteTracker] GetRenderGroups: theme={_themeName}, type={spawnData.noteType}, sp={spawnData.isStarPowerVisible}, colored={renderData.Colored?.Length ?? 0}, noSP={renderData.NoStarPower?.Length ?? 0}, metal={renderData.Metal?.Length ?? 0}");
 
             // Colored batch
             if (renderData.Colored != null && renderData.Colored.Length > 0)
             {
                 var group = renderData.Colored[0];
-                Debug.Log($"[NoteTracker] Calling GetOrCreateBatch: graphicsSystem={_graphicsSystem != null}, mesh={group.Mesh != null}, material={group.Material != null}, graphicsSystemHash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_graphicsSystem)}");
                 var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
-                Debug.Log($"[NoteTracker] GetOrCreateBatch result: batch={batch != null}");
                 if (batch != null)
                 {
                     _coloredBatches[index] = batch;
@@ -157,17 +154,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
 
             _activeCount++;
-
-            // Diagnostic: log first add with batch state
-            if (!_hasLoggedAdd)
-            {
-                _hasLoggedAdd = true;
-                Debug.LogError($"[NoteTracker] First note added: noteType={spawnData.noteType}, hitTime={spawnData.noteHitTime:F2}, baseX={spawnData.baseX:F2}, coloredBatch={_coloredBatches[index] != null}, metalBatch={_metalBatches[index] != null}");
-                if (_coloredBatches[index] != null)
-                    Debug.LogError($"[NoteTracker]   coloredBatch: activeCount={_coloredBatches[index].activeCount}, capacity={_coloredBatches[index].capacity}");
-                if (_metalBatches[index] != null)
-                    Debug.LogError($"[NoteTracker]   metalBatch: activeCount={_metalBatches[index].activeCount}, capacity={_metalBatches[index].capacity}");
-            }
             return index;
         }
 
@@ -246,43 +232,40 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         /// <summary>
         /// Remove notes that have passed the remove point.
-        /// Uses compaction pattern (write-index) for safe removal.
+        /// Uses swap-remove with last active element to preserve batch index integrity.
         /// </summary>
         public void RemoveExpired()
         {
             float visualTime = (float)(UnityEngine.Object.FindAnyObjectByType<GameManager>()?.VisualTime ?? 0);
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
 
-            int writeIndex = 0;
+            // Collect expired indices first (backward scan for safe removal)
+            var expired = new System.Collections.Generic.List<int>();
             for (int i = 0; i < _activeCount; i++)
             {
                 float z = TrackPlayer.STRIKE_LINE_POS + (_spawnData[i].noteHitTime - visualTime) * noteSpeed;
-                if (z >= -4f)
-                {
-                    // Keep this note — compact forward
-                    if (writeIndex != i)
-                    {
-                        SwapElements(writeIndex, i);
-                    }
-                    writeIndex++;
-                }
-                else
-                {
-                    // Remove expired note
-                    object noteObj = _noteObjects[i];
-                    _noteToIndex.Remove(noteObj);
-                    DecrementBatchActiveCount(_coloredBatches[i]);
-                    DecrementBatchActiveCount(_noStarPowerBatches[i]);
-                    DecrementBatchActiveCount(_metalBatches[i]);
-                }
+                if (z < -4f)
+                    expired.Add(i);
             }
-            _activeCount = writeIndex;
 
-            // Diagnostic: log active count on first call
-            if (!_hasLoggedRemoveExpired)
+            // Remove from back to front to avoid index shifting
+            for (int e = expired.Count - 1; e >= 0; e--)
             {
-                _hasLoggedRemoveExpired = true;
+                int idx = expired[e];
+                // Adjust index if elements were removed after it
+                int last = _activeCount - 1;
+                if (idx != last)
+                {
+                    SwapElements(idx, last);
+                }
 
+                object noteObj = _noteObjects[last];
+                _noteToIndex.Remove(noteObj);
+                DecrementBatchActiveCount(_coloredBatches[last]);
+                DecrementBatchActiveCount(_noStarPowerBatches[last]);
+                DecrementBatchActiveCount(_metalBatches[last]);
+                _noteObjects[last] = null;
+                _activeCount--;
             }
         }
 
@@ -303,17 +286,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {
             if (_graphicsSystem == null || _activeCount == 0)
-            {
-                if (!_hasLoggedUploadSkip)
-                {
-                    _hasLoggedUploadSkip = true;
-    
-                }
                 return;
-            }
-
-            int notesWithBatches = 0;
-            int notesWithoutBatches = 0;
 
             for (int i = 0; i < _activeCount; i++)
             {
@@ -333,56 +306,33 @@ namespace YARG.Gameplay.Visuals.Instancing
                     new Vector3(1f, scale, 1f)
                 );
 
-                // World matrix
-                Matrix4x4 worldMatrix = trackLocalToWorld * noteLocal;
-
                 // Upload to colored batch
                 if (_coloredBatches[i] != null)
                 {
-                    _graphicsSystem.UploadInstance(_coloredBatches[i], _coloredLocalIndices[i], worldMatrix, data.color);
-                    notesWithBatches++;
-                }
-                else
-                {
-                    notesWithoutBatches++;
+                    var cb = _coloredBatches[i];
+                    Matrix4x4 worldMatrix = trackLocalToWorld * noteLocal * cb.meshLocalOffset;
+                    _graphicsSystem.UploadInstance(cb, _coloredLocalIndices[i], worldMatrix, data.color);
                 }
 
                 // Upload to no-star-power batch
                 if (_noStarPowerBatches[i] != null)
                 {
-                    _graphicsSystem.UploadInstance(_noStarPowerBatches[i], _noStarPowerLocalIndices[i], worldMatrix, data.colorNoStarPower);
+                    var nsb = _noStarPowerBatches[i];
+                    Matrix4x4 worldMatrixNS = trackLocalToWorld * noteLocal * nsb.meshLocalOffset;
+                    _graphicsSystem.UploadInstance(nsb, _noStarPowerLocalIndices[i], worldMatrixNS, data.colorNoStarPower);
                 }
                 // Upload to metal batch
                 if (_metalBatches[i] != null)
                 {
-                    _graphicsSystem.UploadInstance(_metalBatches[i], _metalLocalIndices[i], worldMatrix, data.metalColor);
+                    var mb = _metalBatches[i];
+                    Matrix4x4 worldMatrixM = trackLocalToWorld * noteLocal * mb.meshLocalOffset;
+                    _graphicsSystem.UploadInstance(mb, _metalLocalIndices[i], worldMatrixM, data.metalColor);
                 }
-            }
-
-            // Diagnostic: log upload completion
-
-
-            // Diagnostic: log batch state every 60 frames when notes active
-            if (_uploadFrameCounter++ % 60 == 0 && _activeCount > 0)
-            {
-                int batchActiveTotal = 0;
-                for (int i = 0; i < _activeCount; i++)
-                {
-                    if (_coloredBatches[i] != null) batchActiveTotal += _coloredBatches[i].activeCount;
-                    if (_metalBatches[i] != null) batchActiveTotal += _metalBatches[i].activeCount;
-                }
-
             }
 
             // Flush uploads
             _graphicsSystem.UploadDirtyData(default);
         }
-
-        private int _uploadFrameCounter;
-        private bool _hasLoggedRemoveExpired;
-        private bool _hasLoggedAdd;
-        private bool _hasLoggedUpload;
-        private bool _hasLoggedUploadSkip;
 
         /// <summary>
         /// Reset all note data for reuse.
