@@ -124,7 +124,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 groups.Add(new RenderGroup
                 {
                     Mesh = sharedMesh,
-                    SubmeshIndex = 0,
+                    SubmeshIndex = entry.MaterialIndex,
                     Material = material,
                     MeshLocalOffset = meshLocalOffset,
                     SourceRendererID = renderer.GetInstanceID()

@@ -27,15 +27,26 @@ namespace YARG.Gameplay.Visuals.Instancing
         private Dictionary<object, int> _noteToIndex = new();
         private object[] _noteObjects; // parallel array for swap-remove fixup
 
-        // Per-note batch assignment: flat index → batch reference
-        // Each note maps to 3 batches (Colored, NoStarPower, Metal)
-        private HighwayElementGraphicsSystem.ElementBatch[] _coloredBatches;
-        private HighwayElementGraphicsSystem.ElementBatch[] _noStarPowerBatches;
-        private HighwayElementGraphicsSystem.ElementBatch[] _metalBatches;
-        // Per-note local indices within each batch
-        private int[] _coloredLocalIndices;
-        private int[] _noStarPowerLocalIndices;
-        private int[] _metalLocalIndices;
+        /// <summary>Which color field of NoteData to use for upload.</summary>
+        internal enum NoteDataField
+        {
+            Color,
+            ColorNoStarPower,
+            MetalColor
+        }
+
+        /// <summary>Single batch assignment for a note instance in one render group.</summary>
+        internal struct NoteBatchAssignment
+        {
+            public HighwayElementGraphicsSystem.ElementBatch Batch;
+            public int LocalIndex;
+            /// <summary>Which color field to use from NoteData.</summary>
+            public NoteDataField ColorField;
+        }
+
+        // Per-note batch assignments: flat index → array of all batch assignments (all render groups)
+        // Each note may have multiple assignments (one per render group across Colored/NoStarPower/Metal)
+        private NoteBatchAssignment[][] _batchAssignments;
 
         // Metadata
         private string _themeName;
@@ -60,19 +71,10 @@ namespace YARG.Gameplay.Visuals.Instancing
             _notes = new NativeArray<NoteData>(capacity, Allocator.Persistent, NativeArrayOptions.ClearMemory);
             _spawnData = new NativeArray<NoteSpawnData>(capacity, Allocator.Persistent, NativeArrayOptions.ClearMemory);
             _noteObjects = new object[capacity];
-            _coloredBatches = new HighwayElementGraphicsSystem.ElementBatch[capacity];
-            _noStarPowerBatches = new HighwayElementGraphicsSystem.ElementBatch[capacity];
-            _metalBatches = new HighwayElementGraphicsSystem.ElementBatch[capacity];
-            _coloredLocalIndices = new int[capacity];
-            _noStarPowerLocalIndices = new int[capacity];
-            _metalLocalIndices = new int[capacity];
+            _batchAssignments = new NoteBatchAssignment[capacity][];
             _activeCount = 0;
         }
 
-        /// <summary>
-        /// Add a new note to the tracker.
-        /// Returns the flat index, or -1 if at capacity.
-        /// </summary>
         /// <summary>
         /// Add a new note to the tracker.
         /// Returns the flat index, or -1 if at capacity.
@@ -91,64 +93,72 @@ namespace YARG.Gameplay.Visuals.Instancing
             // Look up render groups from ThemeMeshCache
             var renderData = ThemeMeshCache.GetRenderGroups(_themeName, spawnData.noteType, spawnData.isStarPowerVisible);
 
-            // Colored batch
-            if (renderData.Colored != null && renderData.Colored.Length > 0)
+            // Collect all batch assignments across ALL render groups (not just [0])
+            var assignments = new List<NoteBatchAssignment>();
+
+            // Iterate ALL Colored render groups
+            if (renderData.Colored != null)
             {
-                var group = renderData.Colored[0];
-                var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
-                if (batch != null)
+                for (int i = 0; i < renderData.Colored.Length; i++)
                 {
-                    _coloredBatches[index] = batch;
-                    _coloredLocalIndices[index] = batch.activeCount;
-                    batch.activeCount++;
+                    var group = renderData.Colored[i];
+                    var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                    if (batch != null)
+                    {
+                        assignments.Add(new NoteBatchAssignment
+                        {
+                            Batch = batch,
+                            LocalIndex = batch.activeCount,
+                            ColorField = NoteDataField.Color
+                        });
+                        batch.activeCount++;
+                    }
                 }
             }
 
-            // NoStarPower batch
-            if (renderData.NoStarPower != null && renderData.NoStarPower.Length > 0)
+            // Iterate ALL NoStarPower render groups
+            if (renderData.NoStarPower != null)
             {
-                var group = renderData.NoStarPower[0];
-                var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
-                if (batch != null)
+                for (int i = 0; i < renderData.NoStarPower.Length; i++)
                 {
-                    _noStarPowerBatches[index] = batch;
-                    _noStarPowerLocalIndices[index] = batch.activeCount;
-                    batch.activeCount++;
+                    var group = renderData.NoStarPower[i];
+                    var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                    if (batch != null)
+                    {
+                        assignments.Add(new NoteBatchAssignment
+                        {
+                            Batch = batch,
+                            LocalIndex = batch.activeCount,
+                            ColorField = NoteDataField.ColorNoStarPower
+                        });
+                        batch.activeCount++;
+                    }
                 }
             }
 
-            // Metal batch
-            if (renderData.Metal != null && renderData.Metal.Length > 0)
+            // Iterate ALL Metal render groups
+            if (renderData.Metal != null)
             {
-                var group = renderData.Metal[0];
-                var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
-                if (batch != null)
+                for (int i = 0; i < renderData.Metal.Length; i++)
                 {
-                    _metalBatches[index] = batch;
-                    _metalLocalIndices[index] = batch.activeCount;
-                    batch.activeCount++;
+                    var group = renderData.Metal[i];
+                    var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                    if (batch != null)
+                    {
+                        assignments.Add(new NoteBatchAssignment
+                        {
+                            Batch = batch,
+                            LocalIndex = batch.activeCount,
+                            ColorField = NoteDataField.MetalColor
+                        });
+                        batch.activeCount++;
+                    }
                 }
             }
 
-            if (renderData.Colored == null || renderData.Colored.Length == 0)
-            {
-                _coloredBatches[index] = null;
-                _coloredLocalIndices[index] = 0;
-            }
-            if (renderData.NoStarPower == null || renderData.NoStarPower.Length == 0)
-            {
-                _noStarPowerBatches[index] = null;
-                _noStarPowerLocalIndices[index] = 0;
-            }
-            if (renderData.Metal == null || renderData.Metal.Length == 0)
-            {
-                _metalBatches[index] = null;
-                _metalLocalIndices[index] = 0;
-            }
+            _batchAssignments[index] = assignments.ToArray();
 
-            if ((renderData.Colored == null || renderData.Colored.Length == 0) &&
-                (renderData.NoStarPower == null || renderData.NoStarPower.Length == 0) &&
-                (renderData.Metal == null || renderData.Metal.Length == 0))
+            if (assignments.Count == 0)
             {
                 Debug.LogWarning($"[NoteTracker] No render groups found for theme '{_themeName}', noteType={spawnData.noteType}, isStarPower={spawnData.isStarPowerVisible}");
             }
@@ -166,12 +176,16 @@ namespace YARG.Gameplay.Visuals.Instancing
             var indices = new List<int>();
             for (int i = 0; i < _activeCount; i++)
             {
-                if (_coloredBatches[i] == batch)
-                    indices.Add(_coloredLocalIndices[i]);
-                else if (_noStarPowerBatches[i] == batch)
-                    indices.Add(_noStarPowerLocalIndices[i]);
-                else if (_metalBatches[i] == batch)
-                    indices.Add(_metalLocalIndices[i]);
+                var assignments = _batchAssignments[i];
+                if (assignments == null) continue;
+                for (int j = 0; j < assignments.Length; j++)
+                {
+                    if (assignments[j].Batch == batch)
+                    {
+                        indices.Add(assignments[j].LocalIndex);
+                        break; // Each note appears at most once per batch
+                    }
+                }
             }
             return indices.ToArray();
         }
@@ -195,12 +209,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 _notes[flatIndex] = _notes[last];
                 _spawnData[flatIndex] = _spawnData[last];
                 _noteObjects[flatIndex] = _noteObjects[last];
-                _coloredBatches[flatIndex] = _coloredBatches[last];
-                _noStarPowerBatches[flatIndex] = _noStarPowerBatches[last];
-                _metalBatches[flatIndex] = _metalBatches[last];
-                _coloredLocalIndices[flatIndex] = _coloredLocalIndices[last];
-                _noStarPowerLocalIndices[flatIndex] = _noStarPowerLocalIndices[last];
-                _metalLocalIndices[flatIndex] = _metalLocalIndices[last];
+                _batchAssignments[flatIndex] = _batchAssignments[last];
 
                 // Fixup reverse lookup for swapped-in element
                 object swappedObj = _noteObjects[flatIndex];
@@ -211,10 +220,16 @@ namespace YARG.Gameplay.Visuals.Instancing
             // Clear last slot
             _noteObjects[last] = null;
 
-            // Decrement batch active counts
-            DecrementBatchActiveCount(_coloredBatches[last]);
-            DecrementBatchActiveCount(_noStarPowerBatches[last]);
-            DecrementBatchActiveCount(_metalBatches[last]);
+            // Decrement batch active counts for ALL assignments of the removed note
+            var removedAssignments = _batchAssignments[last];
+            if (removedAssignments != null)
+            {
+                for (int i = 0; i < removedAssignments.Length; i++)
+                {
+                    DecrementBatchActiveCount(removedAssignments[i].Batch);
+                }
+            }
+            _batchAssignments[last] = null;
 
             _activeCount--;
         }
@@ -261,9 +276,15 @@ namespace YARG.Gameplay.Visuals.Instancing
 
                 object noteObj = _noteObjects[last];
                 _noteToIndex.Remove(noteObj);
-                DecrementBatchActiveCount(_coloredBatches[last]);
-                DecrementBatchActiveCount(_noStarPowerBatches[last]);
-                DecrementBatchActiveCount(_metalBatches[last]);
+                var removedAssignments = _batchAssignments[last];
+                if (removedAssignments != null)
+                {
+                    for (int i = 0; i < removedAssignments.Length; i++)
+                    {
+                        DecrementBatchActiveCount(removedAssignments[i].Batch);
+                    }
+                }
+                _batchAssignments[last] = null;
                 _noteObjects[last] = null;
                 _activeCount--;
             }
@@ -288,14 +309,17 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (_graphicsSystem == null || _activeCount == 0)
                 return;
 
+            // Cache GameManager lookup (called every frame)
+            var gameManager = UnityEngine.Object.FindAnyObjectByType<GameManager>();
+            float visualTime = (float)(gameManager?.VisualTime ?? 0);
+            float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
+
             for (int i = 0; i < _activeCount; i++)
             {
                 var spawn = _spawnData[i];
                 var data = _notes[i];
 
                 // Compute Z position
-                float visualTime = (float)(UnityEngine.Object.FindAnyObjectByType<GameManager>()?.VisualTime ?? 0);
-                float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
                 float z = TrackPlayer.STRIKE_LINE_POS + (spawn.noteHitTime - visualTime) * noteSpeed;
 
                 // Build note element local matrix: T(baseX, 0, z) * S(scale)
@@ -306,27 +330,26 @@ namespace YARG.Gameplay.Visuals.Instancing
                     new Vector3(1f, scale, 1f)
                 );
 
-                // Upload to colored batch
-                if (_coloredBatches[i] != null)
+                // Upload to ALL batch assignments (all render groups)
+                var assignments = _batchAssignments[i];
+                if (assignments == null) continue;
+                for (int j = 0; j < assignments.Length; j++)
                 {
-                    var cb = _coloredBatches[i];
-                    Matrix4x4 worldMatrix = trackLocalToWorld * noteLocal * cb.meshLocalOffset;
-                    _graphicsSystem.UploadInstance(cb, _coloredLocalIndices[i], worldMatrix, data.color);
-                }
+                    var assignment = assignments[j];
+                    if (assignment.Batch == null) continue;
 
-                // Upload to no-star-power batch
-                if (_noStarPowerBatches[i] != null)
-                {
-                    var nsb = _noStarPowerBatches[i];
-                    Matrix4x4 worldMatrixNS = trackLocalToWorld * noteLocal * nsb.meshLocalOffset;
-                    _graphicsSystem.UploadInstance(nsb, _noStarPowerLocalIndices[i], worldMatrixNS, data.colorNoStarPower);
-                }
-                // Upload to metal batch
-                if (_metalBatches[i] != null)
-                {
-                    var mb = _metalBatches[i];
-                    Matrix4x4 worldMatrixM = trackLocalToWorld * noteLocal * mb.meshLocalOffset;
-                    _graphicsSystem.UploadInstance(mb, _metalLocalIndices[i], worldMatrixM, data.metalColor);
+                    Matrix4x4 worldMatrix = trackLocalToWorld * noteLocal * assignment.Batch.meshLocalOffset;
+
+                    // Get the correct color based on the color field
+                    Vector4 color = assignment.ColorField switch
+                    {
+                        NoteDataField.Color => data.color,
+                        NoteDataField.ColorNoStarPower => data.colorNoStarPower,
+                        NoteDataField.MetalColor => data.metalColor,
+                        _ => data.color
+                    };
+
+                    _graphicsSystem.UploadInstance(assignment.Batch, assignment.LocalIndex, worldMatrix, color);
                 }
             }
 
@@ -342,12 +365,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _activeCount = 0;
             _noteToIndex.Clear();
             Array.Clear(_noteObjects, 0, _noteObjects.Length);
-            Array.Clear(_coloredBatches, 0, _coloredBatches.Length);
-            Array.Clear(_noStarPowerBatches, 0, _noStarPowerBatches.Length);
-            Array.Clear(_metalBatches, 0, _metalBatches.Length);
-            Array.Clear(_coloredLocalIndices, 0, _coloredLocalIndices.Length);
-            Array.Clear(_noStarPowerLocalIndices, 0, _noStarPowerLocalIndices.Length);
-            Array.Clear(_metalLocalIndices, 0, _metalLocalIndices.Length);
+            Array.Clear(_batchAssignments, 0, _batchAssignments.Length);
 
             // Reset batch active counts
             // (batches are shared across trackers — don't reset them here)
@@ -382,12 +400,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             (_notes[a], _notes[b]) = (_notes[b], _notes[a]);
             (_spawnData[a], _spawnData[b]) = (_spawnData[b], _spawnData[a]);
             (_noteObjects[a], _noteObjects[b]) = (_noteObjects[b], _noteObjects[a]);
-            (_coloredBatches[a], _coloredBatches[b]) = (_coloredBatches[b], _coloredBatches[a]);
-            (_noStarPowerBatches[a], _noStarPowerBatches[b]) = (_noStarPowerBatches[b], _noStarPowerBatches[a]);
-            (_metalBatches[a], _metalBatches[b]) = (_metalBatches[b], _metalBatches[a]);
-            (_coloredLocalIndices[a], _coloredLocalIndices[b]) = (_coloredLocalIndices[b], _coloredLocalIndices[a]);
-            (_noStarPowerLocalIndices[a], _noStarPowerLocalIndices[b]) = (_noStarPowerLocalIndices[b], _noStarPowerLocalIndices[a]);
-            (_metalLocalIndices[a], _metalLocalIndices[b]) = (_metalLocalIndices[b], _metalLocalIndices[a]);
+            (_batchAssignments[a], _batchAssignments[b]) = (_batchAssignments[b], _batchAssignments[a]);
 
             // Fixup reverse lookup
             if (_noteObjects[a] != null) _noteToIndex[_noteObjects[a]] = a;
