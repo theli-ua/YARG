@@ -3,31 +3,27 @@ using System.Collections;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.SceneManagement;
-using YARG.Core.Song;
 using YARG.Gameplay;
+using YARG.Menu.Persistent;
 using YARG.Song;
 
 namespace YARG
 {
     /// <summary>
     /// Runtime automation for the built player.
-    /// Triggered via command-line arguments:
-    ///   -automationDuration N   - Seconds to run (default: 15)
+    /// Triggered via command-line argument:
+    ///   -automation               - Activate automation
+    ///   -automationDuration N     - Seconds to run (default: 15)
     ///   -automationScreenshotDir "path" - Directory for screenshots
-    ///   -automationSongIndex N  - Song index to play (default: 0 = first song)
-    ///   -benchmark              - Benchmark mode: writes frame times to file, no screenshots
-    ///   -benchmarkSongHash "hash" - Song hash to play (benchmark mode, optional)
+    ///   -automationSongIndex N    - Song index to play (default: 0 = first song, alphabetically ordered)
     /// </summary>
     public class RuntimeAutomation : MonoBehaviour
     {
         private int _duration = 15;
         private string _screenshotDir = "AutomationScreenshots";
         private int _songIndex = 0;
-        private bool _benchmarkMode;
-        private string _benchmarkSongHash;
-        private string _benchmarkFile;
-        private double _skipSeconds;
 
         private void Awake()
         {
@@ -36,7 +32,7 @@ namespace YARG
             bool hasAutomationFlag = false;
             for (int i = 0; i < args.Length; i++)
             {
-                if (args[i] == "-benchmark" || args[i] == "-automation")
+                if (args[i] == "-automation")
                 {
                     hasAutomationFlag = true;
                 }
@@ -66,18 +62,9 @@ namespace YARG
                     _songIndex = si;
                     i++;
                 }
-                else if (args[i] == "-benchmark")
-                {
-                    _benchmarkMode = true;
-                }
-                else if (args[i] == "-benchmarkSongHash")
-                {
-                    _benchmarkSongHash = args[i + 1];
-                    i++;
-                }
             }
 
-            Debug.Log($"[RuntimeAutomation] Duration: {_duration}s, Benchmark: {_benchmarkMode}, SongHash: {_benchmarkSongHash}");
+            Debug.Log($"[RuntimeAutomation] Duration: {_duration}s, Song Index: {_songIndex}");
 
             // Start coroutine — do NOT block the main thread
             StartCoroutine(RunAutomationWithSongWait());
@@ -85,8 +72,8 @@ namespace YARG
 
         private IEnumerator RunAutomationWithSongWait()
         {
-            // Wait for song library to be populated
-            for (int i = 0; i < 500; i++)  // up to ~8 seconds
+            // Wait for song library to be populated (up to ~8 seconds)
+            for (int i = 0; i < 500; i++)
             {
                 if (SongContainer.Songs.Length > 0) break;
                 yield return new WaitForSecondsRealtime(0.016f);
@@ -105,68 +92,41 @@ namespace YARG
             YARG.Settings.SettingsManager.Settings.NoFail.Value = YARG.Gameplay.HUD.NoFailMode.NoMeter;
             Debug.Log("[RuntimeAutomation] NoFail mode enabled");
 
-            // Continue with automation
             yield return StartCoroutine(RunAutomation());
         }
 
         private IEnumerator RunAutomation()
         {
-            // Set the song to load
-            if (GlobalVariables.State.CurrentSong == null)
+            // Set the song to load (alphabetically ordered)
+            if (GlobalVariables.State.CurrentSong == null && SongContainer.Songs.Any())
             {
-                if (!string.IsNullOrEmpty(_benchmarkSongHash))
-                {
-                    // Find song by hash
-                    var targetHash = HashWrapper.FromString(_benchmarkSongHash);
-                    var song = SongContainer.Songs.FirstOrDefault(s => s.Hash.Equals(targetHash));
-                    if (song != null)
-                    {
-                        GlobalVariables.State.CurrentSong = song;
-                        Debug.Log($"[RuntimeAutomation] Setting song by hash: {song.Name} by {song.Artist}");
-                    }
-                    else
-                    {
-                        Debug.LogWarning($"[RuntimeAutomation] Song with hash '{_benchmarkSongHash}' not found, picking first song");
-                        var ordered = SongContainer.Songs.OrderBy(s => s.Name).ToArray();
-                        if (ordered.Length > 0)
-                            GlobalVariables.State.CurrentSong = ordered[0];
-                    }
-                }
-                else if (SongContainer.Songs.Any())
-                {
-                    var ordered = SongContainer.Songs.OrderBy(s => s.Name).ToArray();
-                    var song = _songIndex < ordered.Length ? ordered[_songIndex] : ordered[0];
-                    GlobalVariables.State.CurrentSong = song;
-                    Debug.Log($"[RuntimeAutomation] Setting song: {song.Name} by {song.Artist}");
-                }
-                else
-                {
-                    Debug.LogError("[RuntimeAutomation] No songs found in library");
-                    Application.Quit(1);
-                    yield break;
-                }
+                var ordered = SongContainer.Songs.OrderBy(s => s.Name).ToArray();
+                var song = _songIndex < ordered.Length ? ordered[_songIndex] : ordered[0];
+                GlobalVariables.State.CurrentSong = song;
+                Debug.Log($"[RuntimeAutomation] Setting song: {song.Name} by {song.Artist}");
             }
-            else
+            else if (GlobalVariables.State.CurrentSong != null)
             {
                 Debug.Log($"[RuntimeAutomation] Using existing song: {GlobalVariables.State.CurrentSong.Name}");
             }
 
-            // Benchmark: prepare output file
-            if (_benchmarkMode)
+            // Disable menu music player before loading gameplay
+            var musicPlayer = UnityEngine.Object.FindFirstObjectByType<MusicPlayer>();
+            if (musicPlayer != null)
             {
-                _benchmarkFile = Path.Combine(Application.persistentDataPath, "benchmark.csv");
-                File.WriteAllText(_benchmarkFile, "frame,ms\n");
-                Debug.Log($"[RuntimeAutomation] Benchmark output: {_benchmarkFile}");
+                musicPlayer.gameObject.SetActive(false);
+                Debug.Log("[RuntimeAutomation] Disabled menu music player");
             }
 
-            // Load the Gameplay scene additively (PersistentScene is already loaded)
+            // Load Gameplay scene through proper scene transition (unloads current, loads Gameplay)
             Debug.Log("[RuntimeAutomation] Loading Gameplay scene...");
-            var asyncOp = SceneManager.LoadSceneAsync((int)SceneIndex.Gameplay, LoadSceneMode.Additive);
-            yield return asyncOp;
+            GlobalVariables.Instance.LoadScene(SceneIndex.Gameplay);
 
+            // Wait for Gameplay scene to fully load
+            yield return WaitForSceneLoaded(SceneIndex.Gameplay);
             Debug.Log("[RuntimeAutomation] Gameplay scene loaded");
 
-            // Wait for GameManager to exist (yield-based polling)
+            // Wait for GameManager to exist (up to ~5 seconds)
             GameManager gameManager = null;
             for (int i = 0; i < 300; i++)
             {
@@ -184,9 +144,7 @@ namespace YARG
                 yield break;
             }
 
-            Debug.Log("[RuntimeAutomation] GameManager found");
-
-            // Wait for song to start
+            // Wait for song to start (up to ~10 seconds)
             for (int i = 0; i < 600; i++)
             {
                 if (gameManager.IsSongStarted) break;
@@ -205,9 +163,10 @@ namespace YARG
             Debug.Log($"[RuntimeAutomation] Song started, waiting for notes...");
 
             // Wait for notes to appear (skip song intro)
-            for (int i = 0; i < 2000; i++)  // up to ~32 seconds
+            for (int i = 0; i < 2000; i++)
             {
-                var tp = UnityEngine.Object.FindObjectsByType<YARG.Gameplay.Player.TrackPlayer>(UnityEngine.FindObjectsInactive.Include, UnityEngine.FindObjectsSortMode.None);
+                var tp = UnityEngine.Object.FindObjectsByType<YARG.Gameplay.Player.TrackPlayer>(
+                    UnityEngine.FindObjectsInactive.Include, UnityEngine.FindObjectsSortMode.None);
                 bool hasNotes = false;
                 foreach (var t in tp)
                 {
@@ -220,63 +179,52 @@ namespace YARG
                 if (hasNotes) break;
                 yield return new WaitForSecondsRealtime(0.016f);
             }
+
             Debug.Log($"[RuntimeAutomation] Notes appeared, running for {_duration}s");
 
-            // Take initial screenshot (non-benchmark)
-            if (!_benchmarkMode)
-            {
-                Directory.CreateDirectory(_screenshotDir);
-                TakeScreenshot("start");
-            }
+            // Take initial screenshot
+            Directory.CreateDirectory(_screenshotDir);
+            TakeScreenshot("start");
 
             // Run for the specified duration
             float elapsed = 0f;
             float lastScreenshotTime = -10f;
-            int frameCount = 0;
-            float lastBenchmarkTime = 0f;
 
             while (elapsed < _duration)
             {
                 yield return null; // Wait one frame
                 elapsed += Time.deltaTime;
-                frameCount++;
 
-                // Benchmark: write frame times every 0.5s batch
-                if (_benchmarkMode && (Time.realtimeSinceStartup - lastBenchmarkTime) >= 0.5f)
-                {
-                    lastBenchmarkTime = Time.realtimeSinceStartup;
-                    WriteBenchmarkFrameTimes(frameCount);
-                }
-
-                // Screenshots every 2s (non-benchmark)
-                if (!_benchmarkMode && elapsed - lastScreenshotTime >= 2f)
+                if (elapsed - lastScreenshotTime >= 2f)
                 {
                     lastScreenshotTime = elapsed;
                     TakeScreenshot($"t{elapsed:F1}");
                 }
             }
 
-            // Final output
-            if (!_benchmarkMode)
-                TakeScreenshot("end");
-            else
-                WriteBenchmarkFrameTimes(frameCount);
+            // Final screenshot and exit
+            TakeScreenshot("end");
+            Debug.Log($"[RuntimeAutomation] Complete. Elapsed: {elapsed:F1}s");
 
-            Debug.Log($"[RuntimeAutomation] Complete. Elapsed: {elapsed:F1}s, Frames: {frameCount}");
             // Wait one frame before quitting to let Unity finish rendering
             yield return null;
             Application.Quit(0);
         }
 
-        private int _benchmarkFrameOffset = 0;
-
-        private void WriteBenchmarkFrameTimes(int totalFrames)
+        private IEnumerator WaitForSceneLoaded(SceneIndex scene)
         {
-            if (!File.Exists(_benchmarkFile)) return;
-            // We track frame times via Time.unscaledDeltaTime each frame.
-            // For simplicity, write a summary line per batch.
-            // (Per-frame logging would require per-frame file I/O which is slow.)
-            // Instead, just log total frames and avg FPS at the end.
+            var loaded = false;
+            UnityAction<Scene, LoadSceneMode> handler = (s, m) =>
+            {
+                if (s.buildIndex == (int)scene)
+                    loaded = true;
+            };
+            SceneManager.sceneLoaded += handler;
+
+            while (!loaded)
+                yield return null;
+
+            SceneManager.sceneLoaded -= handler;
         }
 
         private void TakeScreenshot(string suffix)
