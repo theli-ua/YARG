@@ -905,16 +905,18 @@ public override bool ShouldUpdateInputsOnResume => true;
 
         protected override NoteSpawnData CreateNoteSpawnData(GuitarNote note)
         {
-            int lane;
             bool isOpenOrWildcard = note.Fret == (int)FiveFretGuitarFret.Open || note.Fret == (int)FiveFretGuitarFret.Wildcard;
 
+            float baseX;
             if (!isOpenOrWildcard)
             {
-                lane = GetLanePosition((FiveFretGuitarFret)note.Fret);
+                int lane = GetLanePosition((FiveFretGuitarFret)note.Fret);
+                baseX = ComputeElementX(lane, LaneCount);
             }
             else
             {
-                lane = (LaneCount - 1) / 2;
+                // Open/wildcard notes are centered on highway (Vector3.zero in old path)
+                baseX = 0f;
             }
 
             // Scale: FiveLaneKeys uses reduced scale when not using open lane
@@ -927,7 +929,7 @@ public override bool ShouldUpdateInputsOnResume => true;
             return new NoteSpawnData
             {
                 noteHitTime = (float)note.Time,
-                baseX = ComputeElementX(lane, LaneCount),
+                baseX = baseX,
                 noteHeight = Player.HighwayPreset.NoteHeight * scale,
                 noteType = GuitarNoteTypeToThemeNoteType(note.Type, note.Fret),
                 isStarPowerVisible = note.IsStarPower

@@ -905,22 +905,24 @@ namespace YARG.Gameplay.Player
 
         protected override NoteSpawnData CreateNoteSpawnData(GuitarNote note)
         {
-            int lane;
             bool isOpenOrWildcard = note.Fret == (int)FiveFretGuitarFret.Open || note.Fret == (int)FiveFretGuitarFret.Wildcard;
 
+            float baseX;
             if (!isOpenOrWildcard)
             {
-                lane = GetLanePosition((FiveFretGuitarFret)note.Fret);
+                int lane = GetLanePosition((FiveFretGuitarFret)note.Fret);
+                baseX = ComputeElementX(lane, LANE_COUNT);
             }
             else
             {
-                lane = (LANE_COUNT - 1) / 2; // Center for open/wildcard
+                // Open/wildcard notes are centered on highway (Vector3.zero in old path)
+                baseX = 0f;
             }
 
             return new NoteSpawnData
             {
                 noteHitTime = (float)note.Time,
-                baseX = ComputeElementX(lane, LANE_COUNT),
+                baseX = baseX,
                 noteHeight = Player.HighwayPreset.NoteHeight,
                 noteType = GuitarNoteTypeToThemeNoteType(note.Type, note.Fret),
                 isStarPowerVisible = note.IsStarPower

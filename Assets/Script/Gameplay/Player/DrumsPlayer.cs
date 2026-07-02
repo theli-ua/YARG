@@ -1032,20 +1032,32 @@ namespace YARG.Gameplay.Player
 
         protected override NoteSpawnData CreateNoteSpawnData(DrumNote note)
         {
-            var orderingInfo = GetHighwayOrderingInfo(note.Pad);
-            int position = orderingInfo.Position;
-
-            // Kick notes (pad 0) without dedicated lanes: center position
+            bool isKick = note.Pad == (int)FourLaneDrumPad.Kick || note.Pad == (int)FiveLaneDrumPad.Kick;
+            bool isWildcard = note.Pad == (int)FourLaneDrumPad.Wildcard || note.Pad == (int)FiveLaneDrumPad.Wildcard;
             bool kickHasLane = NumberOfDedicatedKickLanes > 0;
-            if (note.Pad == (int)FourLaneDrumPad.Kick && !kickHasLane)
+
+            float baseX;
+            if (isKick && !kickHasLane)
             {
-                position = LaneCount / 2;
+                // Kick notes without dedicated lanes are centered on highway (Vector3.zero in old path)
+                baseX = 0f;
+            }
+            else if (isWildcard)
+            {
+                // Wildcard notes are centered on highway (Vector3.zero in old path)
+                baseX = 0f;
+            }
+            else
+            {
+                var orderingInfo = GetHighwayOrderingInfo(note.Pad);
+                int position = orderingInfo.Position;
+                baseX = ComputeElementX(position, LaneCount);
             }
 
             return new NoteSpawnData
             {
                 noteHitTime = (float)note.Time,
-                baseX = ComputeElementX(position, LaneCount),
+                baseX = baseX,
                 noteHeight = Player.HighwayPreset.NoteHeight,
                 noteType = DrumPadToThemeNoteType(note.Pad),
                 isStarPowerVisible = note.IsStarPower
