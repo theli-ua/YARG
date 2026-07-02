@@ -12,7 +12,7 @@ Shader "HighwaysAlphaMask"
             Cull Off
             ColorMask A
             Blend One One
-            BlendOp Max
+            BlendOp Min
 
             HLSLPROGRAM
             #pragma target 4.5
