@@ -169,11 +169,11 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         /// <summary>
         /// Gets the visible instance indices for a specific batch.
-        /// Returns the actual local indices of active notes in this tracker that belong to the given batch.
+        /// Returns contiguous indices (0..count-1) matching UploadToGPU's per-batch positioning.
         /// </summary>
         internal int[] GetVisibleInstancesForBatch(HighwayElementGraphicsSystem.ElementBatch batch)
         {
-            var indices = new List<int>();
+            int count = 0;
             for (int i = 0; i < _activeCount; i++)
             {
                 var assignments = _batchAssignments[i];
@@ -182,12 +182,14 @@ namespace YARG.Gameplay.Visuals.Instancing
                 {
                     if (assignments[j].Batch == batch)
                     {
-                        indices.Add(assignments[j].LocalIndex);
-                        break; // Each note appears at most once per batch
+                        count++;
+                        break;
                     }
                 }
             }
-            return indices.ToArray();
+            int[] indices = new int[count];
+            for (int i = 0; i < count; i++) indices[i] = i;
+            return indices;
         }
 
         /// <summary>
@@ -211,6 +213,9 @@ namespace YARG.Gameplay.Visuals.Instancing
         internal void Remove(int flatIndex)
         {
             if (flatIndex < 0 || flatIndex >= _activeCount) return;
+
+            // Capture removed note's assignments BEFORE swap (swap overwrites the reference)
+            var removedAssignments = _batchAssignments[flatIndex];
 
             // Get the note object for reverse lookup cleanup
             object noteObj = _noteObjects[flatIndex];
@@ -236,7 +241,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             _noteObjects[last] = null;
 
             // Decrement batch active counts for ALL assignments of the removed note
-            var removedAssignments = _batchAssignments[last];
             if (removedAssignments != null)
             {
                 for (int i = 0; i < removedAssignments.Length; i++)
@@ -329,6 +333,9 @@ namespace YARG.Gameplay.Visuals.Instancing
             float visualTime = (float)(gameManager?.VisualTime ?? 0);
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
 
+            // Track per-batch position — ensures contiguous GPU slots after swap-remove
+            var batchPosition = new System.Collections.Generic.Dictionary<int, int>();
+
             for (int i = 0; i < _activeCount; i++)
             {
                 var spawn = _spawnData[i];
@@ -364,7 +371,12 @@ namespace YARG.Gameplay.Visuals.Instancing
                         _ => data.color
                     };
 
-                    _graphicsSystem.UploadInstance(assignment.Batch, assignment.LocalIndex, worldMatrix, color);
+                    // Use fresh per-batch position (not stale LocalIndex)
+                    int batchKey = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(assignment.Batch);
+                    int pos = batchPosition.TryGetValue(batchKey, out int existing) ? existing : 0;
+                    batchPosition[batchKey] = pos + 1;
+
+                    _graphicsSystem.UploadInstance(assignment.Batch, pos, worldMatrix, color);
                 }
             }
 
