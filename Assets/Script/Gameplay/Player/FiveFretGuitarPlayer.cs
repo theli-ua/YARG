@@ -512,6 +512,10 @@ namespace YARG.Gameplay.Player
 
             foreach (var note in chordParent.AllNotes)
             {
+                // Remove from instanced renderer immediately when hit (sustain notes stay until sustain ends)
+                if (!note.IsSustain)
+                    NoteTracker?.TryRemoveByNote(note);
+
                 (NotePool.GetByKey(note) as FiveFretGuitarNoteElement)?.HitNote();
 
                 if (note.Fret != (int) FiveFretGuitarFret.Open && note.Fret != (int) FiveFretGuitarFret.Wildcard)
@@ -531,6 +535,9 @@ namespace YARG.Gameplay.Player
 
             foreach (var note in chordParent.AllNotes)
             {
+                // Remove from instanced renderer immediately when missed
+                NoteTracker?.TryRemoveByNote(note);
+
                 (NotePool.GetByKey(note) as FiveFretGuitarNoteElement)?.MissNote();
             }
         }

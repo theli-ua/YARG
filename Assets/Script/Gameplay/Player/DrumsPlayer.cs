@@ -463,6 +463,9 @@ namespace YARG.Gameplay.Player
 
             // Remember that drums treat each note separately
 
+            // Remove from instanced renderer immediately when hit
+            NoteTracker?.TryRemoveByNote(note);
+
             (NotePool.GetByKey(note) as DrumsNoteElement)?.HitNote();
 
             // The AnimType doesn't actually matter here
@@ -486,6 +489,9 @@ namespace YARG.Gameplay.Player
             base.OnNoteMissed(index, note);
 
             // Remember that drums treat each note separately
+
+            // Remove from instanced renderer immediately when missed
+            NoteTracker?.TryRemoveByNote(note);
 
             (NotePool.GetByKey(note) as DrumsNoteElement)?.MissNote();
         }

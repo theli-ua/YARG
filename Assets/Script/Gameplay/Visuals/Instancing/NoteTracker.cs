@@ -191,6 +191,21 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         /// <summary>
+        /// Remove a note by its note object reference.
+        /// Returns true if the note was found and removed.
+        /// </summary>
+        internal bool TryRemoveByNote(object noteObject)
+        {
+            if (noteObject == null) return false;
+            if (_noteToIndex.TryGetValue(noteObject, out int idx))
+            {
+                Remove(idx);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Remove a note by flat index using swap-remove pattern.
         /// </summary>
         internal void Remove(int flatIndex)
