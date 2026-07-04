@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -18,17 +17,18 @@ namespace YARG.Gameplay.Visuals.Instancing
         private GraphicsBuffer m_DestinationBuffer;
         private bool m_ShaderAvailable;
 
-        // Compute shader path
+        // Compute shader path — matches EGS architecture
         private ComputeShader m_Shader;
         private int m_CopyKernelIndex;
+        private GraphicsBuffer m_UploadBuffer; // persistent, LockBufferForWrite capable
 
-        // Staging for compute shader uploads
+        // EGS-style: ops grow from buffer start, data grows from buffer end
         private int m_BufferChunkSize;
-        private int m_OperationCount;
-        private int m_OperationCapacity;
-        private Operation* m_Operations;
-        private byte* m_DataBase;
-        private long m_DataWriteOffset;
+        private int m_OperationOffset; // bytes consumed from start (ops)
+        private int m_DataOffset;      // bytes consumed from end (data)
+
+        // Lock state for compute path
+        private byte* m_UploadBufferPtr;
 
         private readonly int m_SrcBufferID;
         private readonly int m_DstBufferID;
@@ -43,12 +43,33 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             m_DestinationBuffer = destinationBuffer;
             m_BufferChunkSize = bufferChunkSize;
-            m_ShaderAvailable = false;
+            m_DirectMinOffset = int.MaxValue;
+            m_DirectMaxOffset = 0;
 
-            // Disable compute shader path — has buffer pointer bugs that cause SIGSEGV.
-            // Use direct upload fallback which is simpler and more reliable.
+            m_SrcBufferID = Shader.PropertyToID("srcBuffer");
+            m_DstBufferID = Shader.PropertyToID("dstBuffer");
+            m_OperationsBaseID = Shader.PropertyToID("operationsBase");
+
+            // Try to load compute shader
+            m_Shader = Resources.Load<ComputeShader>("SparseUploader");
+            if (m_Shader != null)
+            {
+                m_CopyKernelIndex = m_Shader.FindKernel("CopyKernel");
+                if (m_CopyKernelIndex >= 0)
+                {
+                    m_ShaderAvailable = true;
+                    m_UploadBuffer = new GraphicsBuffer(
+                        GraphicsBuffer.Target.Raw,
+                        GraphicsBuffer.UsageFlags.LockBufferForWrite,
+                        bufferChunkSize / 4,
+                        4);
+                    Debug.Log($"[SparseUploader] Compute shader active.");
+                    return;
+                }
+            }
+
             m_ShaderAvailable = false;
-            Debug.Log("[SparseUploader] Using direct upload (GraphicsBuffer.SetData).");
+            Debug.Log("[SparseUploader] Compute shader unavailable, using direct upload (GraphicsBuffer.SetData).");
         }
 
         /// <inheritdoc/>
@@ -59,10 +80,17 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (m_ShaderAvailable)
             {
-                UnsafeUtility.Free(m_Operations, Allocator.Persistent);
-                UnsafeUtility.Free(m_DataBase, Allocator.Persistent);
+                m_UploadBuffer?.Dispose();
             }
+
+            // Free direct upload staging
+            if (m_DirectOpCapacity > 0 && m_DirectOps != null)
+                UnsafeUtility.Free(m_DirectOps, Allocator.Persistent);
+            if (m_DirectDataCapacity > 0 && m_DirectStagingData != null)
+                UnsafeUtility.Free(m_DirectStagingData, Allocator.Persistent);
         }
+
+        // --- Public API (backward compatible) ---
 
         /// <summary>
         /// Adds a new pending upload operation.
@@ -73,7 +101,15 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (m_ShaderAvailable)
             {
-                AddUploadCompute(src, size, offsetInBytes, repeatCount);
+                // Compute path: lock buffer on first AddUpload, write directly
+                if (m_UploadBufferPtr == null)
+                {
+                    var lockResult = m_UploadBuffer.LockBufferForWrite<byte>(0, m_BufferChunkSize);
+                    m_UploadBufferPtr = (byte*)lockResult.GetUnsafePtr();
+                    m_OperationOffset = 0;
+                    m_DataOffset = 0;
+                }
+                AddUploadLocked(m_UploadBufferPtr, src, size, offsetInBytes, repeatCount);
             }
             else
             {
@@ -116,145 +152,200 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
         }
 
-        #region Compute Shader Path
-
-        private void AddUploadCompute(void* src, int size, int offsetInBytes, int repeatCount)
+        private void AddUploadLocked(byte* buffer, void* src, int size, int offsetInBytes, int repeatCount)
         {
-            EnsureOperationsSpace(1);
-            EnsureDataSpace(size);
-
-            int dataOffset = (int)(m_DataBase + m_BufferChunkSize - m_DataWriteOffset - size);
-            UnsafeUtility.MemCpy(m_DataBase + dataOffset, src, size);
-
-            var op = new Operation
+            int opSize = UnsafeUtility.SizeOf<Operation>();
+            for (int r = 0; r < repeatCount; r++)
             {
-                type = 0, // Upload
-                srcOffset = (uint)dataOffset,
-                dstOffset = (uint)offsetInBytes,
-                size = (uint)size,
-                count = (uint)repeatCount
-            };
+                int destOffset = offsetInBytes + r * size;
+                int srcOffset = m_BufferChunkSize - m_DataOffset - size;
+                UnsafeUtility.MemCpy(buffer + srcOffset, src, size);
+                m_DataOffset += size;
 
-            UnsafeUtility.MemCpy(m_Operations + m_OperationCount, &op, UnsafeUtility.SizeOf<Operation>());
-            m_OperationCount++;
+                var op = new Operation
+                {
+                    type = 0,
+                    srcOffset = (uint)srcOffset,
+                    dstOffset = (uint)destOffset,
+                    size = (uint)size,
+                    count = (uint)repeatCount
+                };
+                UnsafeUtility.MemCpy(buffer + m_OperationOffset, &op, opSize);
+                m_OperationOffset += opSize;
+            }
         }
+
+        #region Compute Shader Path (EGS architecture)
 
         private void CommitCompute()
         {
-            if (m_OperationCount == 0)
-            {
-                ResetComputeFrame();
+            if (m_UploadBufferPtr == null)
                 return;
-            }
 
-            const int k_MaxThreadGroups = 65535;
-            int operationSize = UnsafeUtility.SizeOf<Operation>();
-            int totalOpSize = m_OperationCount * operationSize;
-            int bufferSize = m_BufferChunkSize;
+            int numOps = m_OperationOffset / UnsafeUtility.SizeOf<Operation>();
 
-            var uploadBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Raw, bufferSize / 4, 4);
-
-            var bufferData = uploadBuffer.LockBufferForWrite<byte>(0, bufferSize);
-            byte* bufferPtr = (byte*)bufferData.GetUnsafePtr();
-
-            UnsafeUtility.MemCpy(bufferPtr, m_Operations, totalOpSize);
-
-            int dataWritePos = bufferSize;
-            for (int i = m_OperationCount - 1; i >= 0; i--)
+            if (numOps > 0)
             {
-                var op = m_Operations[i];
-                int dataSize = (int)op.size * (int)op.count;
-                dataWritePos -= dataSize;
-                UnsafeUtility.MemCpy(bufferPtr + dataWritePos, m_DataBase + (int)op.srcOffset, dataSize);
+                // Unlock makes staged data visible to GPU
+                m_UploadBuffer.UnlockBufferAfterWrite<byte>(m_BufferChunkSize);
+
+                const int k_MaxThreadGroups = 65535;
+                for (int iOp = 0; iOp < numOps; iOp += k_MaxThreadGroups)
+                {
+                    int opsEnd = Mathf.Min(iOp + k_MaxThreadGroups, numOps);
+                    int numThreadGroups = opsEnd - iOp;
+
+                    m_Shader.SetBuffer(m_CopyKernelIndex, m_SrcBufferID, m_UploadBuffer);
+                    m_Shader.SetBuffer(m_CopyKernelIndex, m_DstBufferID, m_DestinationBuffer);
+                    m_Shader.SetInt(m_OperationsBaseID, iOp);
+                    m_Shader.Dispatch(m_CopyKernelIndex, numThreadGroups, 1, 1);
+                }
             }
-
-            uploadBuffer.UnlockBufferAfterWrite<byte>(bufferSize);
-
-            int numOps = m_OperationCount;
-            for (int iOp = 0; iOp < numOps; iOp += k_MaxThreadGroups)
+            else
             {
-                int opsEnd = Mathf.Min(iOp + k_MaxThreadGroups, numOps);
-                int numThreadGroups = opsEnd - iOp;
-
-                m_Shader.SetBuffer(m_CopyKernelIndex, m_SrcBufferID, uploadBuffer);
-                m_Shader.SetBuffer(m_CopyKernelIndex, m_DstBufferID, m_DestinationBuffer);
-                m_Shader.SetInt(m_OperationsBaseID, iOp);
-                m_Shader.Dispatch(m_CopyKernelIndex, numThreadGroups, 1, 1);
+                m_UploadBuffer.UnlockBufferAfterWrite<byte>(0);
             }
 
-            uploadBuffer.Dispose();
-            ResetComputeFrame();
-        }
-
-        private void ResetComputeFrame()
-        {
-            m_OperationCount = 0;
-            m_DataWriteOffset = m_BufferChunkSize;
-        }
-
-        private void EnsureOperationsSpace(int count)
-        {
-            if (m_OperationCount + count > m_OperationCapacity)
-            {
-                int newCapacity = Mathf.Max(m_OperationCapacity * 2, m_OperationCount + count);
-                var newOps = (Operation*)UnsafeUtility.Malloc(
-                    newCapacity * UnsafeUtility.SizeOf<Operation>(), 8, Allocator.Persistent);
-                UnsafeUtility.MemCpy(newOps, m_Operations, m_OperationCount * UnsafeUtility.SizeOf<Operation>());
-                UnsafeUtility.Free(m_Operations, Allocator.Persistent);
-                m_Operations = newOps;
-                m_OperationCapacity = newCapacity;
-            }
-        }
-
-        private void EnsureDataSpace(int size)
-        {
-            if ((long)size > m_DataWriteOffset)
-            {
-                int oldSize = m_BufferChunkSize;
-                int newSize = Mathf.Max(oldSize * 2, oldSize + size);
-                byte* newData = (byte*)UnsafeUtility.Malloc(newSize, 64, Allocator.Persistent);
-                int usedDataSize = oldSize - (int)m_DataWriteOffset;
-                if (usedDataSize > 0)
-                    UnsafeUtility.MemCpy(newData + newSize - usedDataSize, m_DataBase + oldSize - usedDataSize, usedDataSize);
-                m_DataWriteOffset = newSize - usedDataSize;
-                UnsafeUtility.Free(m_DataBase, Allocator.Persistent);
-                m_DataBase = newData;
-                m_BufferChunkSize = newSize;
-            }
+            m_UploadBufferPtr = null;
         }
 
         #endregion
 
         #region Direct Upload Fallback
 
+        // Op records where in the eager staging buffer the data lives + where it goes on GPU
+        [StructLayout(LayoutKind.Sequential)]
+        private struct DirectUploadOp
+        {
+            public int stagingOffset; // byte offset in m_DirectStagingData
+            public int size;
+            public int offsetInBytes; // byte offset in destination GraphicsBuffer
+        }
+
+        private const int InitialDirectOpCapacity = 64;
+        private int m_DirectOpCount;
+        private int m_DirectOpCapacity;
+        private DirectUploadOp* m_DirectOps;
+
+        // Eager data staging — data copied at AddUpload time (like EGS compute path)
+        private int m_DirectDataSize;
+        private int m_DirectDataCapacity;
+        private byte* m_DirectStagingData;
+
+        // Dirty range tracking for single-SetData commit
+        private int m_DirectMinOffset;
+        private int m_DirectMaxOffset;
+
         private void AddUploadDirect(void* src, int size, int offsetInBytes, int repeatCount)
         {
             if (m_DestinationBuffer == null || m_Disposed)
                 return;
 
-            // For direct uploads, stage data in a temp NativeArray and use SetData
+            int totalBufferSize = m_DestinationBuffer.count * 4;
+
             for (int r = 0; r < repeatCount; r++)
             {
                 int destOffset = offsetInBytes + r * size;
-                int elementOffset = destOffset / 4; // GraphicsBuffer is in ints
-                int elemCount = (size + 3) / 4; // Round up to int boundary
-
-                if (elementOffset < 0 || elementOffset + elemCount > m_DestinationBuffer.count)
-                {
-
+                if (destOffset < 0 || destOffset + size > totalBufferSize)
                     continue;
-                }
 
-                var temp = new NativeArray<int>(elemCount, Allocator.Temp);
-                UnsafeUtility.MemCpy(temp.GetUnsafePtr(), src, size);
-                m_DestinationBuffer.SetData(temp, 0, elementOffset, elemCount);
-                temp.Dispose();
+                // Eagerly copy data into staging buffer (no dangling pointer)
+                int stagingOffset = EnsureDirectDataSpace(size, src);
+
+                // Stage operation metadata
+                EnsureDirectOpSpace();
+                m_DirectOps[m_DirectOpCount].stagingOffset = stagingOffset;
+                m_DirectOps[m_DirectOpCount].size = size;
+                m_DirectOps[m_DirectOpCount].offsetInBytes = destOffset;
+                m_DirectOpCount++;
+
+                // Track dirty range
+                if (destOffset < m_DirectMinOffset)
+                    m_DirectMinOffset = destOffset;
+                int destEnd = destOffset + size;
+                if (destEnd > m_DirectMaxOffset)
+                    m_DirectMaxOffset = destEnd;
             }
+        }
+
+        private void EnsureDirectOpSpace()
+        {
+            if (m_DirectOpCount < m_DirectOpCapacity)
+                return;
+
+            int newCapacity = m_DirectOpCapacity == 0 ? InitialDirectOpCapacity : m_DirectOpCapacity * 2;
+            DirectUploadOp* newOps = (DirectUploadOp*)UnsafeUtility.Malloc(
+                newCapacity * (int)sizeof(DirectUploadOp), 16, Allocator.Persistent);
+            if (m_DirectOpCapacity > 0)
+                UnsafeUtility.MemCpy(newOps, m_DirectOps, m_DirectOpCount * (int)sizeof(DirectUploadOp));
+            else
+                UnsafeUtility.MemSet(newOps, 0, newCapacity * (int)sizeof(DirectUploadOp));
+
+            m_DirectOpCapacity = newCapacity;
+            m_DirectOps = newOps;
+        }
+
+        private int EnsureDirectDataSpace(int size, void* src)
+        {
+            int stagingOffset = m_DirectDataSize;
+            if (m_DirectDataSize + size > m_DirectDataCapacity)
+            {
+                int newCapacity = m_DirectDataCapacity == 0 ? 64 * 1024 : m_DirectDataCapacity * 2;
+                while (newCapacity < m_DirectDataSize + size)
+                    newCapacity *= 2;
+
+                byte* newData = (byte*)UnsafeUtility.Malloc(newCapacity, 64, Allocator.Persistent);
+                if (m_DirectDataSize > 0)
+                    UnsafeUtility.MemCpy(newData, m_DirectStagingData, m_DirectDataSize);
+                if (m_DirectDataCapacity > 0)
+                    UnsafeUtility.Free(m_DirectStagingData, Allocator.Persistent);
+
+                m_DirectStagingData = newData;
+                m_DirectDataCapacity = newCapacity;
+            }
+
+            // Copy source data into staging buffer NOW (eager, like EGS)
+            UnsafeUtility.MemCpy(m_DirectStagingData + stagingOffset, src, size);
+            m_DirectDataSize = stagingOffset + size;
+            return stagingOffset;
         }
 
         private void CommitDirect()
         {
-            // Direct uploads are applied immediately in AddUploadDirect, nothing to commit
+            if (m_DirectOpCount == 0 || m_DestinationBuffer == null)
+            {
+                ResetDirectFrame();
+                return;
+            }
+
+            // Scatter staged data into a single NativeArray covering [minOffset, maxOffset)
+            int rangeSize = m_DirectMaxOffset - m_DirectMinOffset;
+            int rangeSizeInts = (rangeSize + 3) / 4;
+            int elementOffset = m_DirectMinOffset / 4;
+
+            var staging = new NativeArray<int>(rangeSizeInts, Allocator.Temp);
+
+            for (int i = 0; i < m_DirectOpCount; i++)
+            {
+                var op = m_DirectOps[i];
+                int relativeOffset = op.offsetInBytes - m_DirectMinOffset;
+                int stagingIntOffset = relativeOffset / 4;
+                byte* dstPtr = (byte*)staging.GetUnsafePtr();
+                UnsafeUtility.MemCpy(dstPtr + stagingIntOffset * 4,
+                    m_DirectStagingData + op.stagingOffset, op.size);
+            }
+
+            m_DestinationBuffer.SetData(staging, 0, elementOffset, rangeSizeInts);
+            staging.Dispose();
+
+            ResetDirectFrame();
+        }
+
+        private void ResetDirectFrame()
+        {
+            m_DirectOpCount = 0;
+            m_DirectMinOffset = int.MaxValue;
+            m_DirectMaxOffset = 0;
         }
 
         #endregion
