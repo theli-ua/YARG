@@ -442,10 +442,10 @@ namespace YARG.Gameplay.Visuals
             if (_graphicsSystem != null)
             {
                 _graphicsSystem.Dispose();
+                if (GameManager.HighwayElementGraphicsSystemRef == _graphicsSystem)
+                    GameManager.HighwayElementGraphicsSystemRef = null;
                 _graphicsSystem = null;
             }
-            if (GameManager.HighwayElementGraphicsSystemRef == _graphicsSystem)
-                GameManager.HighwayElementGraphicsSystemRef = null;
 
             RenderPipelineManager.beginCameraRendering -= OnPreCameraRender;
             SceneManager.sceneUnloaded -= OnSceneUnloaded;
