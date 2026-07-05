@@ -1,7 +1,13 @@
+// Copyright (c) Unity Technologies. SPDX-License-Identifier: BSD-3-Clause
+// Adapted from Unity.Entities.Graphics SparseUploader.cs
+// Changes: simplified for single-threaded main-thread use (no ThreadedSparseUploader/Burst),
+// retained direct upload fallback for platforms without compute shader support.
+
 using System;
 using System.Runtime.InteropServices;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
+using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -11,35 +17,60 @@ namespace YARG.Gameplay.Visuals.Instancing
     /// Uploads data into a GPU GraphicsBuffer.
     /// Uses compute shader when available for efficient scattered writes.
     /// Falls back to direct GraphicsBuffer.SetData when shader is unavailable.
+    ///
+    /// Architecture matches Unity.Entities.Graphics SparseUploader:
+    /// - Buffer pool with frame-in-flight tracking (prevents CPU overwriting GPU-read buffer)
+    /// - LockBufferForWrite → write ops+data → UnlockBufferAfterWrite → Dispatch
     /// </summary>
     public unsafe class SparseUploader : IDisposable
     {
-        private GraphicsBuffer m_DestinationBuffer;
-        private bool m_ShaderAvailable;
+        const int k_MaxThreadGroupsPerDispatch = 65535;
 
-        // Compute shader path — matches EGS architecture
-        private ComputeShader m_Shader;
-        private int m_CopyKernelIndex;
-        private GraphicsBuffer m_UploadBuffer; // persistent, LockBufferForWrite capable
-
-        // EGS-style: ops grow from buffer start, data grows from buffer end
         private int m_BufferChunkSize;
-        private int m_OperationOffset; // bytes consumed from start (ops)
-        private int m_DataOffset;      // bytes consumed from end (data)
 
-        // Lock state for compute path
+        private GraphicsBuffer m_DestinationBuffer;
+
+        // --- Compute shader path (EGS architecture) ---
+
+        private GraphicsBuffer[] m_UploadBuffers;
+        private int m_UploadBufferCount;
+        private int m_CurrUploadBufferFrame;
+        private int m_CurrBufferIndex;
         private byte* m_UploadBufferPtr;
+
+        private int m_OperationOffset; // bytes consumed from buffer start (ops)
+        private int m_DataOffset;      // bytes consumed from buffer end (data)
+
+        private ComputeShader m_SparseUploaderShader;
+        private int m_CopyKernelIndex;
 
         private readonly int m_SrcBufferID;
         private readonly int m_DstBufferID;
         private readonly int m_OperationsBaseID;
+
+        private bool m_ShaderAvailable;
+
+        // --- Direct upload fallback ---
+
+        private DirectUploadOp* m_DirectOps;
+        private int m_DirectOpCount;
+        private int m_DirectOpCapacity;
+
+        private byte* m_DirectStagingData;
+        private int m_DirectDataSize;
+        private int m_DirectDataCapacity;
+
+        private int m_DirectMinOffset;
+        private int m_DirectMaxOffset;
 
         private bool m_Disposed;
 
         /// <summary>
         /// Constructs a new sparse uploader with the specified buffer as the target.
         /// </summary>
-        public SparseUploader(GraphicsBuffer destinationBuffer, int bufferChunkSize = 256 * 1024)
+        /// <param name="destinationBuffer">The target buffer to write uploads into.</param>
+        /// <param name="bufferChunkSize">The upload buffer chunk size in bytes (default 16MB, matches EGS).</param>
+        public SparseUploader(GraphicsBuffer destinationBuffer, int bufferChunkSize = 16 * 1024 * 1024)
         {
             m_DestinationBuffer = destinationBuffer;
             m_BufferChunkSize = bufferChunkSize;
@@ -50,26 +81,82 @@ namespace YARG.Gameplay.Visuals.Instancing
             m_DstBufferID = Shader.PropertyToID("dstBuffer");
             m_OperationsBaseID = Shader.PropertyToID("operationsBase");
 
-            // Try to load compute shader
-            m_Shader = Resources.Load<ComputeShader>("SparseUploader");
-            if (m_Shader != null)
+            // Try to load compute shader (exact asset from EGS: Unity.Entities.Graphics/Resources/SparseUploader.compute)
+            m_SparseUploaderShader = Resources.Load<ComputeShader>("SparseUploader");
+            if (m_SparseUploaderShader != null)
             {
-                m_CopyKernelIndex = m_Shader.FindKernel("CopyKernel");
+                m_CopyKernelIndex = m_SparseUploaderShader.FindKernel("CopyKernel");
                 if (m_CopyKernelIndex >= 0)
                 {
                     m_ShaderAvailable = true;
-                    m_UploadBuffer = new GraphicsBuffer(
-                        GraphicsBuffer.Target.Raw,
-                        GraphicsBuffer.UsageFlags.LockBufferForWrite,
-                        bufferChunkSize / 4,
-                        4);
-                    Debug.Log($"[SparseUploader] Compute shader active.");
+
+                    // EGS: BufferPool with LockBufferForWrite capable buffers
+                    // We use a fixed ring buffer instead of a dynamic pool since we only need one buffer per frame.
+                    int numBuffers = NumFramesInFlight + 1;
+                    m_UploadBufferCount = numBuffers;
+                    m_UploadBuffers = new GraphicsBuffer[numBuffers];
+
+                    for (int i = 0; i < numBuffers; i++)
+                    {
+                        m_UploadBuffers[i] = new GraphicsBuffer(
+                            GraphicsBuffer.Target.Raw,
+                            GraphicsBuffer.UsageFlags.LockBufferForWrite,
+                            bufferChunkSize / 4,
+                            4);
+                        m_UploadBuffers[i].name = "SparseUploaderBuffer";
+                    }
+
+                    m_CurrBufferIndex = 0;
+                    m_UploadBufferPtr = null;
                     return;
                 }
             }
 
             m_ShaderAvailable = false;
             Debug.Log("[SparseUploader] Compute shader unavailable, using direct upload (GraphicsBuffer.SetData).");
+        }
+
+        /// <summary>
+        /// Returns the number of frames in flight for the current graphics device.
+        /// Copied from EGS SparseUploader.NumFramesInFlight.
+        /// </summary>
+        private static int NumFramesInFlight
+        {
+            get
+            {
+                int numFrames = 0;
+
+                switch (SystemInfo.graphicsDeviceType)
+                {
+                    case GraphicsDeviceType.Vulkan:
+                    case GraphicsDeviceType.Direct3D11:
+                    case GraphicsDeviceType.Direct3D12:
+                    case GraphicsDeviceType.PlayStation4:
+                    case GraphicsDeviceType.PlayStation5:
+                    case GraphicsDeviceType.XboxOne:
+                    case GraphicsDeviceType.GameCoreXboxOne:
+                    case GraphicsDeviceType.GameCoreXboxSeries:
+                    case GraphicsDeviceType.OpenGLCore:
+#if !UNITY_2023_1_OR_NEWER
+                    case GraphicsDeviceType.OpenGLES2:
+#endif
+                    case GraphicsDeviceType.OpenGLES3:
+                    case GraphicsDeviceType.PlayStation5NGGC:
+                        numFrames = 3;
+                        break;
+                    case GraphicsDeviceType.Switch:
+                    case GraphicsDeviceType.Metal:
+                    default:
+                        numFrames = 4;
+                        break;
+                }
+
+                // Use at least as many frames as the quality settings have, but use a platform
+                // specific lower limit in any case.
+                numFrames = math.max(numFrames, QualitySettings.maxQueuedFrames);
+
+                return numFrames;
+            }
         }
 
         /// <inheritdoc/>
@@ -80,7 +167,10 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (m_ShaderAvailable)
             {
-                m_UploadBuffer?.Dispose();
+                for (int i = 0; i < m_UploadBufferCount; i++)
+                {
+                    m_UploadBuffers[i]?.Dispose();
+                }
             }
 
             // Free direct upload staging
@@ -101,14 +191,20 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (m_ShaderAvailable)
             {
-                // Compute path: lock buffer on first AddUpload, write directly
+                // EGS: allocate fresh buffer from pool each frame, lock for write
                 if (m_UploadBufferPtr == null)
                 {
-                    var lockResult = m_UploadBuffer.LockBufferForWrite<byte>(0, m_BufferChunkSize);
+                    // Pick next buffer from ring (cycling through pool)
+                    m_CurrBufferIndex = (m_CurrBufferIndex + 1) % m_UploadBufferCount;
+                    var buffer = m_UploadBuffers[m_CurrBufferIndex];
+
+                    // LockBufferForWrite acts as sync point — blocks until GPU is done with this buffer
+                    var lockResult = buffer.LockBufferForWrite<byte>(0, m_BufferChunkSize);
                     m_UploadBufferPtr = (byte*)lockResult.GetUnsafePtr();
                     m_OperationOffset = 0;
                     m_DataOffset = 0;
                 }
+
                 AddUploadLocked(m_UploadBufferPtr, src, size, offsetInBytes, repeatCount);
             }
             else
@@ -152,30 +248,40 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
         }
 
+        #region Compute Shader Path (EGS architecture)
+
+        /// <summary>
+        /// EGS: writes operation + data into the locked intermediate buffer.
+        /// Operations grow from buffer start, data grows from buffer end.
+        /// </summary>
         private void AddUploadLocked(byte* buffer, void* src, int size, int offsetInBytes, int repeatCount)
         {
             int opSize = UnsafeUtility.SizeOf<Operation>();
+
             for (int r = 0; r < repeatCount; r++)
             {
                 int destOffset = offsetInBytes + r * size;
+
+                // Data offset: from the end of the buffer
                 int srcOffset = m_BufferChunkSize - m_DataOffset - size;
+
+                // Copy source data into buffer at data region
                 UnsafeUtility.MemCpy(buffer + srcOffset, src, size);
                 m_DataOffset += size;
 
-                var op = new Operation
-                {
-                    type = 0,
-                    srcOffset = (uint)srcOffset,
-                    dstOffset = (uint)destOffset,
-                    size = (uint)size,
-                    count = (uint)repeatCount
-                };
+                // Write Operation struct at the beginning of the buffer (zeroed first)
+                Operation op;
+                UnsafeUtility.MemSet(&op, 0, opSize);
+                op.type = 0; // OperationType.Upload
+                op.srcOffset = (uint)srcOffset;
+                op.dstOffset = (uint)destOffset;
+                op.size = (uint)size;
+                op.count = (uint)repeatCount;
+
                 UnsafeUtility.MemCpy(buffer + m_OperationOffset, &op, opSize);
                 m_OperationOffset += opSize;
             }
         }
-
-        #region Compute Shader Path (EGS architecture)
 
         private void CommitCompute()
         {
@@ -183,58 +289,58 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return;
 
             int numOps = m_OperationOffset / UnsafeUtility.SizeOf<Operation>();
+            var buffer = m_UploadBuffers[m_CurrBufferIndex];
 
             if (numOps > 0)
             {
-                // Unlock makes staged data visible to GPU
-                m_UploadBuffer.UnlockBufferAfterWrite<byte>(m_BufferChunkSize);
+                // EGS: UnlockBufferAfterWrite makes staged data visible to GPU
+                buffer.UnlockBufferAfterWrite<byte>(m_BufferChunkSize);
 
-                const int k_MaxThreadGroups = 65535;
-                for (int iOp = 0; iOp < numOps; iOp += k_MaxThreadGroups)
-                {
-                    int opsEnd = Mathf.Min(iOp + k_MaxThreadGroups, numOps);
-                    int numThreadGroups = opsEnd - iOp;
+                DispatchUploads(numOps, buffer);
 
-                    m_Shader.SetBuffer(m_CopyKernelIndex, m_SrcBufferID, m_UploadBuffer);
-                    m_Shader.SetBuffer(m_CopyKernelIndex, m_DstBufferID, m_DestinationBuffer);
-                    m_Shader.SetInt(m_OperationsBaseID, iOp);
-                    m_Shader.Dispatch(m_CopyKernelIndex, numThreadGroups, 1, 1);
-                }
+                // Track frame for buffer recovery
+                m_CurrUploadBufferFrame = Time.renderedFrameCount;
             }
             else
             {
-                m_UploadBuffer.UnlockBufferAfterWrite<byte>(0);
+                buffer.UnlockBufferAfterWrite<byte>(0);
             }
 
             m_UploadBufferPtr = null;
+        }
+
+        /// <summary>
+        /// EGS: DispatchUploads — each thread group processes one operation.
+        /// </summary>
+        private void DispatchUploads(int numOps, GraphicsBuffer graphicsBuffer)
+        {
+            for (int iOp = 0; iOp < numOps; iOp += k_MaxThreadGroupsPerDispatch)
+            {
+                int opsBegin = iOp;
+                int opsEnd = math.min(opsBegin + k_MaxThreadGroupsPerDispatch, numOps);
+                int numThreadGroups = opsEnd - opsBegin;
+
+                m_SparseUploaderShader.SetBuffer(m_CopyKernelIndex, m_SrcBufferID, graphicsBuffer);
+                m_SparseUploaderShader.SetBuffer(m_CopyKernelIndex, m_DstBufferID, m_DestinationBuffer);
+                m_SparseUploaderShader.SetInt(m_OperationsBaseID, opsBegin);
+
+                m_SparseUploaderShader.Dispatch(m_CopyKernelIndex, numThreadGroups, 1, 1);
+            }
         }
 
         #endregion
 
         #region Direct Upload Fallback
 
-        // Op records where in the eager staging buffer the data lives + where it goes on GPU
         [StructLayout(LayoutKind.Sequential)]
         private struct DirectUploadOp
         {
-            public int stagingOffset; // byte offset in m_DirectStagingData
+            public int stagingOffset;
             public int size;
-            public int offsetInBytes; // byte offset in destination GraphicsBuffer
+            public int offsetInBytes;
         }
 
         private const int InitialDirectOpCapacity = 64;
-        private int m_DirectOpCount;
-        private int m_DirectOpCapacity;
-        private DirectUploadOp* m_DirectOps;
-
-        // Eager data staging — data copied at AddUpload time (like EGS compute path)
-        private int m_DirectDataSize;
-        private int m_DirectDataCapacity;
-        private byte* m_DirectStagingData;
-
-        // Dirty range tracking for single-SetData commit
-        private int m_DirectMinOffset;
-        private int m_DirectMaxOffset;
 
         private void AddUploadDirect(void* src, int size, int offsetInBytes, int repeatCount)
         {
@@ -249,17 +355,14 @@ namespace YARG.Gameplay.Visuals.Instancing
                 if (destOffset < 0 || destOffset + size > totalBufferSize)
                     continue;
 
-                // Eagerly copy data into staging buffer (no dangling pointer)
                 int stagingOffset = EnsureDirectDataSpace(size, src);
 
-                // Stage operation metadata
                 EnsureDirectOpSpace();
                 m_DirectOps[m_DirectOpCount].stagingOffset = stagingOffset;
                 m_DirectOps[m_DirectOpCount].size = size;
                 m_DirectOps[m_DirectOpCount].offsetInBytes = destOffset;
                 m_DirectOpCount++;
 
-                // Track dirty range
                 if (destOffset < m_DirectMinOffset)
                     m_DirectMinOffset = destOffset;
                 int destEnd = destOffset + size;
@@ -304,7 +407,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 m_DirectDataCapacity = newCapacity;
             }
 
-            // Copy source data into staging buffer NOW (eager, like EGS)
             UnsafeUtility.MemCpy(m_DirectStagingData + stagingOffset, src, size);
             m_DirectDataSize = stagingOffset + size;
             return stagingOffset;
@@ -318,7 +420,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return;
             }
 
-            // Scatter staged data into a single NativeArray covering [minOffset, maxOffset)
             int rangeSize = m_DirectMaxOffset - m_DirectMinOffset;
             int rangeSizeInts = (rangeSize + 3) / 4;
             int elementOffset = m_DirectMinOffset / 4;
@@ -350,7 +451,7 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         #endregion
 
-        // Operation struct matching the compute shader
+        // Operation struct — exact copy from EGS (Unity.Rendering.Operation)
         [StructLayout(LayoutKind.Sequential)]
         private struct Operation
         {

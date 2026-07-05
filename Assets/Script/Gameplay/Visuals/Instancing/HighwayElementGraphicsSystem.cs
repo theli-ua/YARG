@@ -145,7 +145,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _heapAllocator = new HeapAllocator((ulong)(InitialBufferSize - ZeroMatrixSize), 16);
 
             // Initialize sparse uploader
-            _sparseUploader = new SparseUploader(_gpuBuffer, bufferChunkSize: 1024 * 1024);
+            _sparseUploader = new SparseUploader(_gpuBuffer); // default 16MB chunk (EGS default)
 
             // Create BatchRendererGroup using BatchRendererGroupCreateInfo
             var createInfo = new BatchRendererGroupCreateInfo
