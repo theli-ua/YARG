@@ -76,7 +76,7 @@ namespace YARG.Gameplay
 
         public static void CreateUnscaledBackgroundTexture()
         {
-            VenueCameraRendererStatics.RecreateTextures();
+VenueCameraRendererStatics.RecreateTextures();
         }
 
         private void OnEnable()

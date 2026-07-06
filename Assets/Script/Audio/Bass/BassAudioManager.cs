@@ -122,12 +122,7 @@ namespace YARG.Audio.BASS
 
             // Documentation recommends setting the device buffer to at least 2x the device period
             // https://www.un4seen.com/doc/#bass/BASS_CONFIG_DEV_BUFFER.html
-#if !UNITY_EDITOR && UNITY_STANDALONE_LINUX
-            // Linux sometimes needs a higher buffer length to prevent underruns
-            Bass.DeviceBufferLength = 4 * devPeriod;
-#else
             Bass.DeviceBufferLength = 2 * devPeriod;
-#endif
 
             // Affects Windows only. Forces device names to be in UTF-8 on Windows rather than ANSI.
             Bass.UnicodeDeviceInformation = true;
@@ -555,6 +550,23 @@ namespace YARG.Audio.BASS
             YargLogger.LogInfo("Finished loading Metronome");
         }
 
+        public override void LoadVenueSample(string name, byte[] sampleData, OutputChannel? outputChannel = null)
+        {
+            VenueSamples[name] = BassVenueSampleChannel.Create(name, sampleData, outputChannel);
+        }
+
+        public override void ClearVenueSamples()
+        {
+            foreach(var sample in VenueSamples.Values)
+            {
+                sample.Stop();
+                sample.Dispose();
+            }
+
+            VenueSamples.Clear();
+        }
+
+
         protected override void SetMasterVolume(double volume)
         {
 #if UNITY_EDITOR
@@ -565,10 +577,6 @@ namespace YARG.Audio.BASS
             Bass.GlobalSampleVolume = (int) (10_000 * volume);
         }
 
-        protected override void ToggleBuffer_Internal(bool enable)
-        {
-            // Nothing
-        }
 
         protected override void SetBufferLength_Internal(int length)
         {

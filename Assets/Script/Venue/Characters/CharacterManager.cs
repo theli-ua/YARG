@@ -20,6 +20,7 @@ namespace YARG.Venue.Characters
         private GameObject _venue;
 
         private readonly Dictionary<VenueCharacter.CharacterType, VenueCharacter> _characters = new();
+        public Dictionary<VenueCharacter.CharacterType, VenueCharacter> Characters => _characters;
 
         private DrumCharacterHelper _drumCharacterHelper = new();
 
@@ -30,6 +31,8 @@ namespace YARG.Venue.Characters
         private List<GuitarNote>   _bassNotes;
         private List<GuitarNote>   _keysNotes;
         private List<ProKeysNote>  _proKeysNotes;
+
+        private List<LyricsPhrase> _lyricPhrases;
 
         private List<AnimationEvent> _guitarAnimationEvents;
         private List<AnimationEvent> _bassAnimationEvents;
@@ -110,6 +113,10 @@ namespace YARG.Venue.Characters
                 }
             }
 
+            _lyricPhrases = chart.Lyrics.Phrases;
+
+            _vocalMaps = GenerateMap(_vocalNotes);
+
             _guitarAnimationEvents = guitarTrack.Animations.AnimationEvents;
             _bassAnimationEvents = bassTrack.Animations.AnimationEvents;
             _drumAnimationEvents = drumsTrack.Animations.AnimationEvents;
@@ -151,7 +158,14 @@ namespace YARG.Venue.Characters
 
             if (_vocalMaps.Count < 1)
             {
-                _vocalMaps = GenerateMap(_vocalNotes);
+                if (_vocalNotes.Count > 0)
+                {
+                    _vocalMaps = GenerateMap(_vocalNotes);
+                }
+                else
+                {
+                    _vocalMaps = GenerateMap(_lyricPhrases);
+                }
             }
 
             // Register self with GameManager
@@ -174,6 +188,8 @@ namespace YARG.Venue.Characters
                 character.Initialize(this);
                 _characters.Add(character.Type, character);
             }
+
+            GameManager.SetVenueCharacterManager(this);
         }
 
         private void Update()
@@ -533,6 +549,14 @@ namespace YARG.Venue.Characters
         }
 
         private static List<AnimationTrigger> GenerateMap(List<VocalsPhrase> phrases)
+        {
+            var events = new List<ChartEvent>();
+            events.AddRange(phrases);
+
+            return GenerateMap(events);
+        }
+
+        private static List<AnimationTrigger> GenerateMap(List<LyricsPhrase> phrases)
         {
             var events = new List<ChartEvent>();
             events.AddRange(phrases);
