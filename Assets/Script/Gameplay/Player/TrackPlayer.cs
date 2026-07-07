@@ -312,7 +312,8 @@ namespace YARG.Gameplay.Player
                     themePreset.Name,
                     HighwayIndex,
                     graphicsSystem,
-                    this);
+                    this,
+                    GameManager);
                 hcr.RegisterNoteTracker(NoteTracker);
                 Debug.Log($"[TrackPlayer{HighwayIndex}] NoteTracker initialized (capacity={NotePool.ObjectCap}, theme={themePreset.Name})");
             }

@@ -445,6 +445,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         private void ResetDirectFrame()
         {
             m_DirectOpCount = 0;
+            m_DirectDataSize = 0;
             m_DirectMinOffset = int.MaxValue;
             m_DirectMaxOffset = 0;
         }

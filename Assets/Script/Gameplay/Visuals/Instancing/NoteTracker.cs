@@ -53,6 +53,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         private int _highwayIndex;
         private HighwayElementGraphicsSystem _graphicsSystem;
         private TrackPlayer _trackPlayer; // for color/profile access
+        private GameManager _gameManager;
 
         private bool _disposed;
 
@@ -60,13 +61,15 @@ namespace YARG.Gameplay.Visuals.Instancing
         private int _capacity;
 
         internal NoteTracker(int capacity, string themeName, int highwayIndex,
-            HighwayElementGraphicsSystem graphicsSystem, TrackPlayer trackPlayer)
+            HighwayElementGraphicsSystem graphicsSystem, TrackPlayer trackPlayer,
+            GameManager gameManager)
         {
             _capacity = capacity;
             _themeName = themeName;
             _highwayIndex = highwayIndex;
             _graphicsSystem = graphicsSystem;
             _trackPlayer = trackPlayer;
+            _gameManager = gameManager;
 
             _notes = new NativeArray<NoteData>(capacity, Allocator.Persistent, NativeArrayOptions.ClearMemory);
             _spawnData = new NativeArray<NoteSpawnData>(capacity, Allocator.Persistent, NativeArrayOptions.ClearMemory);
@@ -83,7 +86,10 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             int index = _activeCount;
             if (index >= _capacity)
+            {
+                Debug.LogWarning($"[NoteTracker{_highwayIndex}] NOTE CAPACITY HIT: {_activeCount}/{_capacity}, dropping note (type={spawnData.noteType})");
                 return -1;
+            }
 
             _notes[index] = data;
             _spawnData[index] = spawnData;
@@ -93,10 +99,12 @@ namespace YARG.Gameplay.Visuals.Instancing
             // Look up render groups from ThemeMeshCache
             var renderData = ThemeMeshCache.GetRenderGroups(_themeName, spawnData.noteType, spawnData.isStarPowerVisible);
 
-            // Collect all batch assignments across ALL render groups (not just [0])
+            // Collect all batch assignments across ALL render groups (not just [0]).
+            // NOTE: batch.activeCount is NOT modified here — it is owned exclusively by
+            // per-frame uploads (BeginUploadFrame resets, UploadInstance increments).
+            // LocalIndex is a stale hint only; UploadToGPU uses fresh sequential positions.
             var assignments = new List<NoteBatchAssignment>();
 
-            // Iterate ALL Colored render groups
             if (renderData.Colored != null)
             {
                 for (int i = 0; i < renderData.Colored.Length; i++)
@@ -108,15 +116,13 @@ namespace YARG.Gameplay.Visuals.Instancing
                         assignments.Add(new NoteBatchAssignment
                         {
                             Batch = batch,
-                            LocalIndex = batch.activeCount,
+                            LocalIndex = 0,
                             ColorField = NoteDataField.Color
                         });
-                        batch.activeCount++;
                     }
                 }
             }
 
-            // Iterate ALL NoStarPower render groups
             if (renderData.NoStarPower != null)
             {
                 for (int i = 0; i < renderData.NoStarPower.Length; i++)
@@ -128,15 +134,13 @@ namespace YARG.Gameplay.Visuals.Instancing
                         assignments.Add(new NoteBatchAssignment
                         {
                             Batch = batch,
-                            LocalIndex = batch.activeCount,
+                            LocalIndex = 0,
                             ColorField = NoteDataField.ColorNoStarPower
                         });
-                        batch.activeCount++;
                     }
                 }
             }
 
-            // Iterate ALL Metal render groups
             if (renderData.Metal != null)
             {
                 for (int i = 0; i < renderData.Metal.Length; i++)
@@ -148,10 +152,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                         assignments.Add(new NoteBatchAssignment
                         {
                             Batch = batch,
-                            LocalIndex = batch.activeCount,
+                            LocalIndex = 0,
                             ColorField = NoteDataField.MetalColor
                         });
-                        batch.activeCount++;
                     }
                 }
             }
@@ -165,31 +168,6 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             _activeCount++;
             return index;
-        }
-
-        /// <summary>
-        /// Gets the visible instance indices for a specific batch.
-        /// Returns contiguous indices (0..count-1) matching UploadToGPU's per-batch positioning.
-        /// </summary>
-        internal int[] GetVisibleInstancesForBatch(HighwayElementGraphicsSystem.ElementBatch batch)
-        {
-            int count = 0;
-            for (int i = 0; i < _activeCount; i++)
-            {
-                var assignments = _batchAssignments[i];
-                if (assignments == null) continue;
-                for (int j = 0; j < assignments.Length; j++)
-                {
-                    if (assignments[j].Batch == batch)
-                    {
-                        count++;
-                        break;
-                    }
-                }
-            }
-            int[] indices = new int[count];
-            for (int i = 0; i < count; i++) indices[i] = i;
-            return indices;
         }
 
         /// <summary>
@@ -214,10 +192,6 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             if (flatIndex < 0 || flatIndex >= _activeCount) return;
 
-            // Capture removed note's assignments BEFORE swap (swap overwrites the reference)
-            var removedAssignments = _batchAssignments[flatIndex];
-
-            // Get the note object for reverse lookup cleanup
             object noteObj = _noteObjects[flatIndex];
             _noteToIndex.Remove(noteObj);
 
@@ -225,13 +199,11 @@ namespace YARG.Gameplay.Visuals.Instancing
             int last = _activeCount - 1;
             if (flatIndex != last)
             {
-                // Swap all arrays
                 _notes[flatIndex] = _notes[last];
                 _spawnData[flatIndex] = _spawnData[last];
                 _noteObjects[flatIndex] = _noteObjects[last];
                 _batchAssignments[flatIndex] = _batchAssignments[last];
 
-                // Fixup reverse lookup for swapped-in element
                 object swappedObj = _noteObjects[flatIndex];
                 if (swappedObj != null)
                     _noteToIndex[swappedObj] = flatIndex;
@@ -239,16 +211,11 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             // Clear last slot
             _noteObjects[last] = null;
-
-            // Decrement batch active counts for ALL assignments of the removed note
-            if (removedAssignments != null)
-            {
-                for (int i = 0; i < removedAssignments.Length; i++)
-                {
-                    DecrementBatchActiveCount(removedAssignments[i].Batch);
-                }
-            }
             _batchAssignments[last] = null;
+
+            // NOTE: batch.activeCount is NOT decremented here — it is owned by per-frame
+            // uploads. The next UploadToGPU writes a dense [0..count-1] range and sets
+            // activeCount to the actual written count, so removed notes naturally drop out.
 
             _activeCount--;
         }
@@ -270,42 +237,15 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void RemoveExpired()
         {
-            float visualTime = (float)(UnityEngine.Object.FindAnyObjectByType<GameManager>()?.VisualTime ?? 0);
+            double visualTime = _gameManager != null ? _gameManager.VisualTime : 0.0;
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
 
-            // Collect expired indices first (backward scan for safe removal)
-            var expired = new System.Collections.Generic.List<int>();
-            for (int i = 0; i < _activeCount; i++)
+            // Backward iteration: remove in place without collecting indices (no allocation).
+            for (int i = _activeCount - 1; i >= 0; i--)
             {
-                float z = TrackPlayer.STRIKE_LINE_POS + (_spawnData[i].noteHitTime - visualTime) * noteSpeed;
+                float z = TrackPlayer.STRIKE_LINE_POS + ((float)(_spawnData[i].noteHitTime - visualTime)) * noteSpeed;
                 if (z < -4f)
-                    expired.Add(i);
-            }
-
-            // Remove from back to front to avoid index shifting
-            for (int e = expired.Count - 1; e >= 0; e--)
-            {
-                int idx = expired[e];
-                // Adjust index if elements were removed after it
-                int last = _activeCount - 1;
-                if (idx != last)
-                {
-                    SwapElements(idx, last);
-                }
-
-                object noteObj = _noteObjects[last];
-                _noteToIndex.Remove(noteObj);
-                var removedAssignments = _batchAssignments[last];
-                if (removedAssignments != null)
-                {
-                    for (int i = 0; i < removedAssignments.Length; i++)
-                    {
-                        DecrementBatchActiveCount(removedAssignments[i].Batch);
-                    }
-                }
-                _batchAssignments[last] = null;
-                _noteObjects[last] = null;
-                _activeCount--;
+                    Remove(i);
             }
         }
 
@@ -325,16 +265,16 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {
-            if (_graphicsSystem == null || _activeCount == 0)
+            if (_graphicsSystem == null || _activeCount == 0 || _gameManager == null)
                 return;
 
-            // Cache GameManager lookup (called every frame)
-            var gameManager = UnityEngine.Object.FindAnyObjectByType<GameManager>();
-            float visualTime = (float)(gameManager?.VisualTime ?? 0);
+            double visualTime = _gameManager.VisualTime;
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
 
-            // Track per-batch position — ensures contiguous GPU slots after swap-remove
-            var batchPosition = new System.Collections.Generic.Dictionary<int, int>();
+            // Reset all batches' activeCount to 0 for this frame (idempotent across trackers).
+            // Batches are SHARED across trackers (same theme → same batch), so this must
+            // run once per frame; subsequent trackers append to the same batches.
+            _graphicsSystem.BeginUploadFrame();
 
             for (int i = 0; i < _activeCount; i++)
             {
@@ -342,7 +282,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var data = _notes[i];
 
                 // Compute Z position
-                float z = TrackPlayer.STRIKE_LINE_POS + (spawn.noteHitTime - visualTime) * noteSpeed;
+                float z = TrackPlayer.STRIKE_LINE_POS + ((float)(spawn.noteHitTime - visualTime)) * noteSpeed;
 
                 // Build note element local matrix: T(baseX, 0, z) * S(scale)
                 float scale = spawn.noteHeight;
@@ -352,7 +292,10 @@ namespace YARG.Gameplay.Visuals.Instancing
                     new Vector3(1f, scale, 1f)
                 );
 
-                // Upload to ALL batch assignments (all render groups)
+                // Upload to ALL batch assignments (all render groups).
+                // The write slot is batch.activeCount itself — BeginUploadFrame reset it to 0
+                // and UploadInstance increments it. Because batches are shared across trackers,
+                // using activeCount as the slot ensures trackers append (not overwrite) each other.
                 var assignments = _batchAssignments[i];
                 if (assignments == null) continue;
                 for (int j = 0; j < assignments.Length; j++)
@@ -362,7 +305,6 @@ namespace YARG.Gameplay.Visuals.Instancing
 
                     Matrix4x4 worldMatrix = trackLocalToWorld * noteLocal * assignment.Batch.meshLocalOffset;
 
-                    // Get the correct color based on the color field
                     Vector4 color = assignment.ColorField switch
                     {
                         NoteDataField.Color => data.color,
@@ -371,11 +313,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                         _ => data.color
                     };
 
-                    // Use fresh per-batch position (not stale LocalIndex)
-                    int batchKey = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(assignment.Batch);
-                    int pos = batchPosition.TryGetValue(batchKey, out int existing) ? existing : 0;
-                    batchPosition[batchKey] = pos + 1;
-
+                    int pos = assignment.Batch.activeCount;
                     _graphicsSystem.UploadInstance(assignment.Batch, pos, worldMatrix, color);
                 }
             }
@@ -411,27 +349,6 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             _noteToIndex.Clear();
             _graphicsSystem?.UnregisterNoteTracker(this);
-        }
-
-        // ---- Private helpers ----
-
-        private void DecrementBatchActiveCount(HighwayElementGraphicsSystem.ElementBatch batch)
-        {
-            if (batch != null && batch.activeCount > 0)
-                batch.activeCount--;
-        }
-
-        private void SwapElements(int a, int b)
-        {
-            // Swap all arrays and fixup reverse lookup
-            (_notes[a], _notes[b]) = (_notes[b], _notes[a]);
-            (_spawnData[a], _spawnData[b]) = (_spawnData[b], _spawnData[a]);
-            (_noteObjects[a], _noteObjects[b]) = (_noteObjects[b], _noteObjects[a]);
-            (_batchAssignments[a], _batchAssignments[b]) = (_batchAssignments[b], _batchAssignments[a]);
-
-            // Fixup reverse lookup
-            if (_noteObjects[a] != null) _noteToIndex[_noteObjects[a]] = a;
-            if (_noteObjects[b] != null) _noteToIndex[_noteObjects[b]] = b;
         }
 
         // ---- Task 4.x: Reverse lookup helpers ----

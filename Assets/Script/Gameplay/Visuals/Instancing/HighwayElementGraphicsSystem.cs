@@ -56,6 +56,16 @@ namespace YARG.Gameplay.Visuals.Instancing
         private bool _hasLoggedDrawCommands;
         private const int ZeroMatrixSize = 64; // float4x4 at offset 0
 
+        // Sequential batch index counter — assigned to each new ElementBatch.
+        // Used by NoteTracker to key pre-allocated per-batch position arrays (no per-frame Dict).
+        private int _nextBatchIndex;
+
+        /// <summary>Upper bound for batchIndex values currently in use (for sizing per-batch arrays).</summary>
+        internal int BatchIndexUpperBound => _nextBatchIndex;
+
+        // Frame counter for BeginUploadFrame — ensures batches reset activeCount once per frame.
+        private int _uploadFrame = -1;
+
         private bool _disposed;
 
         #region ElementBatch (Task 2.2)
@@ -77,6 +87,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             public int worldToObjectOffset;
             public int baseColorOffset;
             public Matrix4x4 meshLocalOffset;
+            /// <summary>Sequential index assigned at creation, used to key pre-allocated per-batch arrays in trackers.</summary>
+            public int batchIndex;
         }
 
         #endregion
@@ -305,7 +317,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                 objectToWorldOffset = objectToWorldOffset,
                 worldToObjectOffset = worldToObjectOffset,
                 baseColorOffset = baseColorOffset,
-                meshLocalOffset = meshLocalOffset ?? Matrix4x4.identity
+                meshLocalOffset = meshLocalOffset ?? Matrix4x4.identity,
+                batchIndex = _nextBatchIndex++
             };
 
             _batches[key] = batch;
@@ -359,6 +372,23 @@ namespace YARG.Gameplay.Visuals.Instancing
             return dependency;
         }
 
+        /// <summary>
+        /// Resets <see cref="ElementBatch.activeCount"/> for every batch to zero.
+        /// Must be called once per frame BEFORE any tracker uploads instance data.
+        /// The first tracker to upload in a frame triggers this; subsequent trackers append.
+        /// This makes <c>activeCount</c> reflect exactly the instances written this frame,
+        /// which is what <see cref="OnPerformCullingCallback"/> uses as <c>visibleCount</c>.
+        /// </summary>
+        internal void BeginUploadFrame()
+        {
+            if (_disposed) return;
+            int frame = Time.frameCount;
+            if (_uploadFrame == frame) return;
+            _uploadFrame = frame;
+            foreach (var batch in _batches.Values)
+                batch.activeCount = 0;
+        }
+
         #endregion
 
         #region Culling Callback (Task 2.9)
@@ -373,18 +403,32 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (_disposed || _brg == null)
                 return default;
 
-            // First pass: count total visible instances
+            // First pass: count total visible instances (sum of activeCount across batches)
             int totalVisible = 0;
+            int activeBatchCount = 0;
             foreach (var batch in _batches.Values)
             {
-                totalVisible += batch.activeCount;
+                if (batch.activeCount > 0)
+                {
+                    totalVisible += batch.activeCount;
+                    activeBatchCount++;
+                }
             }
 
             if (totalVisible == 0)
                 return default;
 
-            // Allocate draw command and visibility arrays
-            int drawCommandsSize = totalVisible * UnsafeUtility.SizeOf<BatchDrawCommand>();
+            // Periodic diagnostic — log every 300 frames
+            _cullFrameCounter++;
+            if (_cullFrameCounter % 300 == 0)
+            {
+                int totalCapacity = 0;
+                foreach (var b in _batches.Values) totalCapacity += b.capacity;
+                Debug.Log($"[HEGS] CULL DIAG: batches={_batches.Count}, activeBatches={activeBatchCount}, visible={totalVisible}, totalCapacity={totalCapacity}, gpuBuffer={_gpuBuffer.count * 4 / 1024}KB");
+            }
+
+            // Allocate draw command and visibility arrays (TempJob — freed by BRG after callback)
+            int drawCommandsSize = activeBatchCount * UnsafeUtility.SizeOf<BatchDrawCommand>();
             int instancesSize = totalVisible * sizeof(int);
             int alignment = UnsafeUtility.AlignOf<long>();
 
@@ -394,44 +438,21 @@ namespace YARG.Gameplay.Visuals.Instancing
             int visibleInstanceOffset = 0;
             int drawCommandIndex = 0;
 
-            // Fill draw commands for each active batch
+            // Fill draw commands for each active batch.
+            // Visible instances are [0, 1, ..., activeCount-1] — batches are kept dense
+            // by UploadToGPU's per-frame sequential write (reset to 0 each frame).
             foreach (var batch in _batches.Values)
             {
-                if (batch.activeCount <= 0)
+                int count = batch.activeCount;
+                if (count <= 0)
                     continue;
 
-                // Find which tracker owns this batch and get actual visible instance indices
-                NoteTracker ownerTracker = null;
-                int[] visibleInstances = null;
-                foreach (var tracker in _trackers)
-                {
-                    if (tracker is NoteTracker nt)
-                    {
-                        var indices = nt.GetVisibleInstancesForBatch(batch);
-                        if (indices.Length > 0)
-                        {
-                            ownerTracker = nt;
-                            visibleInstances = indices;
-                            break;
-                        }
-                    }
-                }
-
-                if (visibleInstances == null)
-                {
-                    // Fallback: use [0, 1, 2, ...] (shouldn't happen in normal operation)
-                    visibleInstances = new int[batch.activeCount];
-                    for (int i = 0; i < batch.activeCount; i++)
-                        visibleInstances[i] = i;
-                }
-
-                // Compute splitVisibilityMask based on actual visible count (Bug 1 fix)
-                // splitVisibilityMask is ushort in BatchDrawCommand — cap at 16 bits
+                // splitVisibilityMask is ushort — cap at 16 bits
                 ushort splitVisibilityMask;
-                if (visibleInstances.Length >= 16)
+                if (count >= 16)
                     splitVisibilityMask = 0xffff;
                 else
-                    splitVisibilityMask = (ushort)((1 << visibleInstances.Length) - 1);
+                    splitVisibilityMask = (ushort)((1 << count) - 1);
 
                 var cmd = new BatchDrawCommand
                 {
@@ -439,7 +460,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                     materialID = batch.materialID,
                     meshID = batch.meshID,
                     submeshIndex = (ushort)batch.submeshIndex,
-                    visibleCount = (uint)visibleInstances.Length,
+                    visibleCount = (uint)count,
                     visibleOffset = (uint)visibleInstanceOffset,
                     splitVisibilityMask = splitVisibilityMask,
                     flags = 0,
@@ -449,12 +470,12 @@ namespace YARG.Gameplay.Visuals.Instancing
                 UnsafeUtility.WriteArrayElement(drawCommandsPtr, drawCommandIndex, cmd);
                 drawCommandIndex++;
 
-                // Copy actual visible instance indices (Bug 2 fix — not [0,1,2,...])
-                for (int i = 0; i < visibleInstances.Length; i++)
+                // Generate contiguous visible instance indices [0, 1, ..., count-1]
+                for (int i = 0; i < count; i++)
                 {
-                    UnsafeUtility.WriteArrayElement(instancesPtr, visibleInstanceOffset + i, visibleInstances[i]);
+                    UnsafeUtility.WriteArrayElement(instancesPtr, visibleInstanceOffset + i, i);
                 }
-                visibleInstanceOffset += visibleInstances.Length;
+                visibleInstanceOffset += count;
             }
 
             // Write draw commands to culling output (use pointer, not struct copy)
@@ -545,29 +566,34 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// <param name="instanceIndex">The index within the batch (0-based).</param>
         /// <param name="objectToWorld">The object-to-world matrix.</param>
         /// <param name="baseColor">The base color (RGBA).</param>
+        /// <summary>
+        /// Uploads instance data for a single element in a batch.
+        /// Writes objectToWorld, worldToObject, and baseColor to the GPU buffer.
+        /// Uses SoA layout: each property has its own contiguous array.
+        /// The instance is written to slot <paramref name="instanceIndex"/> and
+        /// <see cref="ElementBatch.activeCount"/> is bumped to cover it (culling reads it).
+        /// </summary>
+        /// <param name="batch">The batch to upload into (class reference, mutations persist).</param>
+        /// <param name="instanceIndex">The GPU slot within the batch (0-based).</param>
+        /// <param name="objectToWorld">The object-to-world matrix.</param>
+        /// <param name="baseColor">The base color (RGBA).</param>
         internal void UploadInstance(ElementBatch batch, int instanceIndex,
             Matrix4x4 objectToWorld, Vector4 baseColor)
         {
             if (_disposed) return;
 
             if (batch == null)
-            {
-
                 return;
-            }
 
             if (instanceIndex >= batch.capacity)
             {
-
+                Debug.LogWarning($"[HEGS] BATCH OVERFLOW: instanceIndex={instanceIndex} >= capacity={batch.capacity}, activeCount={batch.activeCount}");
                 return;
             }
 
             // Validate batch offsets before use
-            if (batch.objectToWorldOffset <= 0 || batch.worldToObjectOffset <= 0 || batch.baseColorOffset <= 0)
-            {
-
+            if (batch.objectToWorldOffset < ZeroMatrixSize || batch.worldToObjectOffset < ZeroMatrixSize || batch.baseColorOffset < ZeroMatrixSize)
                 return;
-            }
 
             // SoA layout: each property has its own contiguous array
             // objectToWorld: 48 bytes per instance (packed float3x4)
@@ -588,17 +614,10 @@ namespace YARG.Gameplay.Visuals.Instancing
             // Base color (16 bytes = 4 floats)
             _sparseUploader.AddUpload(baseColor, colorOffset);
 
-            // Update active count (persists because ElementBatch is a class)
+            // activeCount drives culling visibleCount. Bump to cover this slot so the
+            // culling callback (which may run after uploads) sees the correct count.
             if (instanceIndex >= batch.activeCount)
                 batch.activeCount = instanceIndex + 1;
-        }
-
-        /// <summary>
-        /// Resets the active count of a batch (called when instances are removed).
-        /// </summary>
-        internal void ResetBatchActiveCount(ElementBatch batch)
-        {
-            batch.activeCount = 0;
         }
 
         #endregion
