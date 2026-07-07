@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using UnityEngine;
 using YARG.Core.Chart;
+using YARG.Core.Engine.Keys;
 using YARG.Core.Game;
 using YARG.Gameplay.Player;
+using YARG.Helpers.Extensions;
 using YARG.Themes;
 
 namespace YARG.Gameplay.Visuals.Instancing
@@ -246,7 +249,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void RemoveExpired()
         {
-            Profiler.BeginSample("NoteTracker.RemoveExpired");
+            UnityEngine.Profiling.Profiler.BeginSample("NoteTracker.RemoveExpired");
             try
             {
                 if (_disposed) return;
@@ -263,7 +266,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
             finally
             {
-                Profiler.EndSample();
+                UnityEngine.Profiling.Profiler.EndSample();
             }
         }
 
@@ -283,7 +286,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {
-            Profiler.BeginSample("NoteTracker.UploadToGPU");
+            UnityEngine.Profiling.Profiler.BeginSample("NoteTracker.UploadToGPU");
             try
             {
                 if (_disposed) return;
@@ -344,7 +347,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
             finally
             {
-                Profiler.EndSample();
+                UnityEngine.Profiling.Profiler.EndSample();
             }
         }
 
@@ -422,39 +425,94 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             if (_disposed) return;
 
-            // Determine color profile based on instrument type
-            var colors = _trackPlayer switch
+            // Handle each instrument type separately to avoid type inference issues
+            switch (_trackPlayer)
             {
-                DrumsPlayer drums => drums.IsFiveLaneMode
-                    ? _trackPlayer.Player.ColorProfile.FiveLaneDrums
-                    : _trackPlayer.Player.ColorProfile.FourLaneDrums,
-                ProKeysPlayer => _trackPlayer.Player.ColorProfile.ProKeys,
-                FiveLaneKeysPlayer => _trackPlayer.Player.ColorProfile.FiveFretGuitar,
-                FiveFretGuitarPlayer => _trackPlayer.Player.ColorProfile.FiveFretGuitar,
-                _ => _trackPlayer.Player.ColorProfile.FiveFretGuitar // fallback
-            };
-
-            for (int i = 0; i < _activeCount; i++)
-            {
-                if (!_spawnData[i].isStarPowerVisible) continue;
-
-                var noteData = _notes[i];
-
-                // Recompute color based on dynamic SP state
-                noteData.color = isStarPowerActive
-                    ? colors.GetNoteStarPowerColor(_spawnData[i].colorIndex).ToUnityColor()
-                    : colors.GetNoteColor(_spawnData[i].colorIndex).ToUnityColor();
-
-                // Metal color: dynamic for guitar/drums/ProKeys, constant for FiveLaneKeys
-                // FiveLaneKeys: metalColor uses NoteRef.IsStarPower (constant)
-                // Guitar/Drums/ProKeys: metalColor uses dynamic SP state
-                bool isFiveLaneKeys = _trackPlayer is FiveLaneKeysPlayer;
-                if (!isFiveLaneKeys)
+                case DrumsPlayer drums:
                 {
-                    noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
+                    if (drums.IsFiveLaneMode)
+                    {
+                        var colors = drums.Player.ColorProfile.FiveLaneDrums;
+                        for (int i = 0; i < _activeCount; i++)
+                        {
+                            if (!_spawnData[i].isStarPowerVisible) continue;
+                            var noteData = _notes[i];
+                            int idx = _spawnData[i].colorIndex;
+                            noteData.color = isStarPowerActive
+                                ? colors.GetNoteStarPowerColor(idx).ToUnityColor()
+                                : colors.GetNoteColor(idx).ToUnityColor();
+                            noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
+                            _notes[i] = noteData;
+                        }
+                    }
+                    else
+                    {
+                        var colors = drums.Player.ColorProfile.FourLaneDrums;
+                        for (int i = 0; i < _activeCount; i++)
+                        {
+                            if (!_spawnData[i].isStarPowerVisible) continue;
+                            var noteData = _notes[i];
+                            int idx = _spawnData[i].colorIndex;
+                            noteData.color = isStarPowerActive
+                                ? colors.GetNoteStarPowerColor(idx).ToUnityColor()
+                                : colors.GetNoteColor(idx).ToUnityColor();
+                            noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
+                            _notes[i] = noteData;
+                        }
+                    }
+                    break;
                 }
-
-                _notes[i] = noteData;
+                case ProKeysPlayer:
+                {
+                    var colors = _trackPlayer.Player.ColorProfile.ProKeys;
+                    for (int i = 0; i < _activeCount; i++)
+                    {
+                        if (!_spawnData[i].isStarPowerVisible) continue;
+                        var noteData = _notes[i];
+                        int key = _spawnData[i].colorIndex;
+                        bool isWhite = ProKeysUtilities.IsWhiteKey(key % 12);
+                        // ProKeys: color based on white/black key, SP uses StarPower variants
+                        noteData.color = isStarPowerActive
+                            ? (isWhite ? colors.WhiteNoteStarPower : colors.BlackNoteStarPower).ToUnityColor()
+                            : (isWhite ? colors.WhiteNote : colors.BlackNote).ToUnityColor();
+                        noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
+                        _notes[i] = noteData;
+                    }
+                    break;
+                }
+                case FiveLaneKeysPlayer:
+                {
+                    var colors = _trackPlayer.Player.ColorProfile.FiveFretGuitar;
+                    for (int i = 0; i < _activeCount; i++)
+                    {
+                        if (!_spawnData[i].isStarPowerVisible) continue;
+                        var noteData = _notes[i];
+                        int idx = _spawnData[i].colorIndex;
+                        noteData.color = isStarPowerActive
+                            ? colors.GetNoteStarPowerColor(idx).ToUnityColor()
+                            : colors.GetNoteColor(idx).ToUnityColor();
+                        // FiveLaneKeys: metalColor uses constant NoteRef.IsStarPower, don't update
+                        _notes[i] = noteData;
+                    }
+                    break;
+                }
+                case FiveFretGuitarPlayer:
+                default:
+                {
+                    var colors = _trackPlayer.Player.ColorProfile.FiveFretGuitar;
+                    for (int i = 0; i < _activeCount; i++)
+                    {
+                        if (!_spawnData[i].isStarPowerVisible) continue;
+                        var noteData = _notes[i];
+                        int idx = _spawnData[i].colorIndex;
+                        noteData.color = isStarPowerActive
+                            ? colors.GetNoteStarPowerColor(idx).ToUnityColor()
+                            : colors.GetNoteColor(idx).ToUnityColor();
+                        noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
+                        _notes[i] = noteData;
+                    }
+                    break;
+                }
             }
         }
 
@@ -464,7 +522,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// Pulse SP-activator notes by lerping their color based on strong beat progress.
         /// Each note's color is computed individually using its colorIndex.
         /// </summary>
-        internal void PulseStarPowerActivators(float beatPercentage, ColorProfile.IFretColorProvider colors)
+        internal void PulseStarPowerActivators(float beatPercentage, System.Func<int, Vector4> getBaseColor, System.Func<int, Vector4> getPulseColor)
         {
             if (_disposed) return;
 
@@ -473,8 +531,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                 if (!_spawnData[i].isStarPowerActivator) continue;
 
                 int colorIdx = _spawnData[i].colorIndex;
-                var baseColor = colors.GetNoteColor(colorIdx).ToUnityColor();
-                var pulseColor = colors.GetNoteStarPowerColor(colorIdx).ToUnityColor();
+                var baseColor = getBaseColor(colorIdx);
+                var pulseColor = getPulseColor(colorIdx);
 
                 var noteData = _notes[i];
                 noteData.color = Vector4.Lerp(baseColor, pulseColor, beatPercentage);

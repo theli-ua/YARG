@@ -4,7 +4,7 @@ using System.Linq;
 using Cysharp.Text;
 using UnityEngine;
 using UnityEngine.InputSystem.LowLevel;
-using YARG.Assets.Script.Gameplay.Player;
+using YARG.Gameplay.Player;
 using YARG.Core.Audio;
 using YARG.Core.Chart;
 using YARG.Core.Extensions;

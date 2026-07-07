@@ -370,7 +370,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal void BeginUploadFrame()
         {
-            Profiler.BeginSample("HEGS.BeginUploadFrame");
+            UnityEngine.Profiling.Profiler.BeginSample("HEGS.BeginUploadFrame");
             try
             {
                 if (_disposed) return;
@@ -382,7 +382,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
             finally
             {
-                Profiler.EndSample();
+                UnityEngine.Profiling.Profiler.EndSample();
             }
         }
 
@@ -396,7 +396,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             BatchCullingOutput cullingOutput,
             IntPtr userContext)
         {
-            Profiler.BeginSample("HEGS.OnPerformCulling");
+            UnityEngine.Profiling.Profiler.BeginSample("HEGS.OnPerformCulling");
             try
             {
                 // Guard against disposal during shutdown
@@ -498,7 +498,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
             finally
             {
-                Profiler.EndSample();
+                UnityEngine.Profiling.Profiler.EndSample();
             }
         }
 

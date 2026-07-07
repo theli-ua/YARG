@@ -1,5 +1,5 @@
 ﻿using UnityEngine;
-using YARG.Assets.Script.Gameplay.Player;
+using YARG.Gameplay.Player;
 using YARG.Core.Chart;
 using YARG.Helpers;
 

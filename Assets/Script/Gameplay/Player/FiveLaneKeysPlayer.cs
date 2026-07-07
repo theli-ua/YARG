@@ -24,7 +24,7 @@ using YARG.Themes;
 using YARG.Gameplay.Visuals.Instancing;
 using static YARG.Core.Engine.Keys.FiveLaneKeysEngine;
 
-namespace YARG.Assets.Script.Gameplay.Player
+namespace YARG.Gameplay.Player
 {
     public sealed class FiveLaneKeysPlayer : TrackPlayer<FiveLaneKeysEngine, GuitarNote>
     {

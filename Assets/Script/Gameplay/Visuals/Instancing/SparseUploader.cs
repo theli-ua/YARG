@@ -236,7 +236,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void Commit()
         {
-            Profiler.BeginSample("SparseUploader.Commit");
+            UnityEngine.Profiling.Profiler.BeginSample("SparseUploader.Commit");
             try
             {
                 if (m_DestinationBuffer == null || m_Disposed) return;
@@ -252,7 +252,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
             finally
             {
-                Profiler.EndSample();
+                UnityEngine.Profiling.Profiler.EndSample();
             }
         }
 

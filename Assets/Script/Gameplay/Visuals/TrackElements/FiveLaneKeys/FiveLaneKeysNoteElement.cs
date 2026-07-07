@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Drawing.Text;
 using UnityEngine;
-using YARG.Assets.Script.Gameplay.Player;
+using YARG.Gameplay.Player;
 using YARG.Core.Chart;
 using YARG.Core.Engine;
 using YARG.Core.Engine.Keys;

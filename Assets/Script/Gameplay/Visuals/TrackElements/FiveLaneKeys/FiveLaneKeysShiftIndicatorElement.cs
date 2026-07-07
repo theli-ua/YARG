@@ -1,5 +1,5 @@
 ﻿using UnityEngine;
-using YARG.Assets.Script.Gameplay.Player;
+using YARG.Gameplay.Player;
 using YARG.Gameplay.Player;
 
 namespace YARG.Gameplay.Visuals

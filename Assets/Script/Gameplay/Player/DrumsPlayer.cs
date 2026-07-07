@@ -1085,7 +1085,7 @@ namespace YARG.Gameplay.Player
                 noteType = DrumPadToThemeNoteType(note.Pad),
                 isStarPowerVisible = note.IsStarPower,
                 isStarPowerActivator = note.IsStarPowerActivator,
-                colorIndex = GetHighwayOrderingInfo(note.Pad).ColorIndex
+                colorIndex = (byte)GetHighwayOrderingInfo(note.Pad).ColorIndex
             };
         }
 
@@ -1134,13 +1134,23 @@ namespace YARG.Gameplay.Player
             // Get beat progress percentage
             float beatPercentage = (float)GameManager.BeatEventHandler.Visual.StrongBeat.CurrentPercentage;
 
-            // Get color profile
-            var colors = _fiveLaneMode
-                ? Player.ColorProfile.FiveLaneDrums
-                : Player.ColorProfile.FourLaneDrums;
-
             // Pulse SP-activator notes: lerp between base fret color and SP color
-            NoteTracker?.PulseStarPowerActivators(beatPercentage, colors);
+            if (_fiveLaneMode)
+            {
+                var colors = Player.ColorProfile.FiveLaneDrums;
+                NoteTracker?.PulseStarPowerActivators(
+                    beatPercentage,
+                    idx => colors.GetNoteColor(idx).ToUnityColor(),
+                    idx => colors.GetNoteStarPowerColor(idx).ToUnityColor());
+            }
+            else
+            {
+                var colors = Player.ColorProfile.FourLaneDrums;
+                NoteTracker?.PulseStarPowerActivators(
+                    beatPercentage,
+                    idx => colors.GetNoteColor(idx).ToUnityColor(),
+                    idx => colors.GetNoteStarPowerColor(idx).ToUnityColor());
+            }
         }
     }
 }
