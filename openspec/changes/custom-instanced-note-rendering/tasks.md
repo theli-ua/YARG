@@ -112,8 +112,8 @@
 
 - [x] 8.1 `dualRenderMode = false` by default (production).
 - [ ] 8.2 Document that GameObject notes remain for sustain lines and beatlines (deferred).
-- [ ] 8.3 Clean up unused theme model GameObject references after full migration.
-- [ ] 8.4 Remove `TrackElement.LeftyFlipMultiplier` and `TrackElement.LeftyFlip` (dead code — zero call sites, lane-remapping approach makes them misleading).
+- [x] 8.3 Clean up unused theme model GameObject references after full migration.
+- [x] 8.4 Remove `TrackElement.LeftyFlipMultiplier` and `TrackElement.LeftyFlip` (dead code — zero call sites, lane-remapping approach makes them misleading).
 
 ---
 

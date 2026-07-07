@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RendererUtils;
 using UnityEngine.Rendering.Universal;
@@ -71,6 +72,13 @@ namespace YARG.Gameplay.Visuals
 
         /// <summary>Debug toggle: when false (production), GameObject note heads are not spawned.</summary>
         public bool dualRenderMode { get; set; } = false;
+
+        /// <summary>Keyboard debug toggle for dualRenderMode (Ctrl+D). Logs state change.</summary>
+        private void ToggleDualRenderMode()
+        {
+            dualRenderMode = !dualRenderMode;
+            Debug.Log($"[HighwayCameraRendering] dualRenderMode toggled to {dualRenderMode}");
+        }
 
         // Persistent structured buffers — allocated once, never disposed (~6.4KB GPU, single instance)
         private static ComputeBuffer s_cameraMatrixBuffer; // 32 × 3 Matrix4x4 (interleaved: view, invView, proj)
@@ -517,6 +525,12 @@ namespace YARG.Gameplay.Visuals
 
         private void LateUpdate()
         {
+            // Debug toggle: Ctrl+D to toggle dualRenderMode for A/B visual comparison
+            if (Keyboard.current != null && Keyboard.current.ctrlKey.isPressed && Keyboard.current.dKey.wasPressedThisFrame)
+            {
+                ToggleDualRenderMode();
+            }
+
             if (!_allowTextureRecreation)
             {
                 return;
