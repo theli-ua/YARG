@@ -127,7 +127,6 @@ namespace YARG.Gameplay.Visuals
             // HighwayElementGraphicsSystem integration
             _graphicsSystem = new HighwayElementGraphicsSystem();
             _graphicsSystem.OnCreate();
-            GameManager.HighwayElementGraphicsSystemRef = _graphicsSystem;
 
             // BRG renders for all cameras via SetEnabledViewTypes(Camera).
             // Camera.batchRendererGroup is not available in this Unity version.
@@ -442,8 +441,6 @@ namespace YARG.Gameplay.Visuals
             if (_graphicsSystem != null)
             {
                 _graphicsSystem.Dispose();
-                if (GameManager.HighwayElementGraphicsSystemRef == _graphicsSystem)
-                    GameManager.HighwayElementGraphicsSystemRef = null;
                 _graphicsSystem = null;
             }
 

@@ -42,6 +42,11 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         public static readonly int Size = UnsafeUtility.SizeOf<NoteData>();
 
+        static NoteData()
+        {
+            Debug.Assert(Size == 68, $"NoteData.Size must be 68 bytes, got {Size}");
+        }
+
         /// <summary>
         /// Packs noteType, isStarPower, isSustain, and isOpenNote into a single uint bitfield.
         /// </summary>
@@ -99,5 +104,10 @@ namespace YARG.Gameplay.Visuals.Instancing
         public bool isStarPowerVisible;
 
         public static readonly int Size = UnsafeUtility.SizeOf<NoteSpawnData>();
+
+        static NoteSpawnData()
+        {
+            Debug.Assert(Size == 20, $"NoteSpawnData.Size must be 20 bytes, got {Size}");
+        }
     }
 }

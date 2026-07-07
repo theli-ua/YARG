@@ -236,15 +236,23 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void Commit()
         {
-            if (m_DestinationBuffer == null || m_Disposed) return;
+            Profiler.BeginSample("SparseUploader.Commit");
+            try
+            {
+                if (m_DestinationBuffer == null || m_Disposed) return;
 
-            if (m_ShaderAvailable)
-            {
-                CommitCompute();
+                if (m_ShaderAvailable)
+                {
+                    CommitCompute();
+                }
+                else
+                {
+                    CommitDirect();
+                }
             }
-            else
+            finally
             {
-                CommitDirect();
+                Profiler.EndSample();
             }
         }
 

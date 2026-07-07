@@ -84,6 +84,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal int Add(NoteData data, NoteSpawnData spawnData, object noteObject)
         {
+            if (_disposed) return -1;
             int index = _activeCount;
             if (index >= _capacity)
             {
@@ -176,6 +177,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal bool TryRemoveByNote(object noteObject)
         {
+            if (_disposed) return false;
             if (noteObject == null) return false;
             if (_noteToIndex.TryGetValue(noteObject, out int idx))
             {
@@ -190,6 +192,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal void Remove(int flatIndex)
         {
+            if (_disposed) return;
             if (flatIndex < 0 || flatIndex >= _activeCount) return;
 
             object noteObj = _noteObjects[flatIndex];
@@ -210,6 +213,11 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
 
             // Clear last slot
+            if (flatIndex != last)
+            {
+                _notes[last] = default;
+                _spawnData[last] = default;
+            }
             _noteObjects[last] = null;
             _batchAssignments[last] = null;
 
@@ -237,7 +245,11 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void RemoveExpired()
         {
-            double visualTime = _gameManager != null ? _gameManager.VisualTime : 0.0;
+            Profiler.BeginSample("NoteTracker.RemoveExpired");
+            try
+            {
+                if (_disposed) return;
+                double visualTime = _gameManager != null ? _gameManager.VisualTime : 0.0;
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
 
             // Backward iteration: remove in place without collecting indices (no allocation).
@@ -246,6 +258,11 @@ namespace YARG.Gameplay.Visuals.Instancing
                 float z = TrackPlayer.STRIKE_LINE_POS + ((float)(_spawnData[i].noteHitTime - visualTime)) * noteSpeed;
                 if (z < -4f)
                     Remove(i);
+            }
+            }
+            finally
+            {
+                Profiler.EndSample();
             }
         }
 
@@ -265,8 +282,12 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {
-            if (_graphicsSystem == null || _activeCount == 0 || _gameManager == null)
-                return;
+            Profiler.BeginSample("NoteTracker.UploadToGPU");
+            try
+            {
+                if (_disposed) return;
+                if (_graphicsSystem == null || _activeCount == 0 || _gameManager == null)
+                    return;
 
             double visualTime = _gameManager.VisualTime;
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
@@ -320,6 +341,11 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             // Flush uploads
             _graphicsSystem.UploadDirtyData(default);
+            }
+            finally
+            {
+                Profiler.EndSample();
+            }
         }
 
         /// <summary>

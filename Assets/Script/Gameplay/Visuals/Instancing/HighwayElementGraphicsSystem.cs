@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
@@ -56,13 +55,6 @@ namespace YARG.Gameplay.Visuals.Instancing
         private bool _hasLoggedDrawCommands;
         private const int ZeroMatrixSize = 64; // float4x4 at offset 0
 
-        // Sequential batch index counter — assigned to each new ElementBatch.
-        // Used by NoteTracker to key pre-allocated per-batch position arrays (no per-frame Dict).
-        private int _nextBatchIndex;
-
-        /// <summary>Upper bound for batchIndex values currently in use (for sizing per-batch arrays).</summary>
-        internal int BatchIndexUpperBound => _nextBatchIndex;
-
         // Frame counter for BeginUploadFrame — ensures batches reset activeCount once per frame.
         private int _uploadFrame = -1;
 
@@ -87,8 +79,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             public int worldToObjectOffset;
             public int baseColorOffset;
             public Matrix4x4 meshLocalOffset;
-            /// <summary>Sequential index assigned at creation, used to key pre-allocated per-batch arrays in trackers.</summary>
-            public int batchIndex;
         }
 
         #endregion
@@ -317,8 +307,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 objectToWorldOffset = objectToWorldOffset,
                 worldToObjectOffset = worldToObjectOffset,
                 baseColorOffset = baseColorOffset,
-                meshLocalOffset = meshLocalOffset ?? Matrix4x4.identity,
-                batchIndex = _nextBatchIndex++
+                meshLocalOffset = meshLocalOffset ?? Matrix4x4.identity
             };
 
             _batches[key] = batch;
@@ -381,12 +370,20 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal void BeginUploadFrame()
         {
-            if (_disposed) return;
-            int frame = Time.frameCount;
-            if (_uploadFrame == frame) return;
-            _uploadFrame = frame;
-            foreach (var batch in _batches.Values)
-                batch.activeCount = 0;
+            Profiler.BeginSample("HEGS.BeginUploadFrame");
+            try
+            {
+                if (_disposed) return;
+                int frame = Time.frameCount;
+                if (_uploadFrame == frame) return;
+                _uploadFrame = frame;
+                foreach (var batch in _batches.Values)
+                    batch.activeCount = 0;
+            }
+            finally
+            {
+                Profiler.EndSample();
+            }
         }
 
         #endregion
@@ -399,9 +396,12 @@ namespace YARG.Gameplay.Visuals.Instancing
             BatchCullingOutput cullingOutput,
             IntPtr userContext)
         {
-            // Guard against disposal during shutdown
-            if (_disposed || _brg == null)
-                return default;
+            Profiler.BeginSample("HEGS.OnPerformCulling");
+            try
+            {
+                // Guard against disposal during shutdown
+                if (_disposed || _brg == null)
+                    return default;
 
             // First pass: count total visible instances (sum of activeCount across batches)
             int totalVisible = 0;
@@ -495,6 +495,11 @@ namespace YARG.Gameplay.Visuals.Instancing
             drawCmdOutput->drawCommandPickingEntityIds = null;
 
             return default;
+            }
+            finally
+            {
+                Profiler.EndSample();
+            }
         }
 
         #endregion

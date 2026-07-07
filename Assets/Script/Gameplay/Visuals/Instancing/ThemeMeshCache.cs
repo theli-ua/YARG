@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 using YARG.Themes;
 
@@ -42,46 +41,32 @@ namespace YARG.Gameplay.Visuals.Instancing
         private static readonly HashSet<string> s_extractedThemes = new();
 
         /// <summary>
-        /// Extracts mesh/material data from a theme model prefab.
-        /// Call once per theme at load time. Destroys the instantiated prefab after extraction.
+        /// Extracts mesh/material data from a ThemeNote component.
+        /// The caller is responsible for instantiating/destroying the GameObject.
         /// </summary>
-        internal static void ExtractFromTheme(string themeName, GameObject themeModel, ThemeNoteType noteType)
+        internal static void ExtractFromTheme(string themeName, ThemeNote themeNote)
         {
-            if (themeModel == null)
+            if (themeNote == null)
             {
-                Debug.LogError($"[ThemeMeshCache] ExtractFromTheme: themeModel is null for noteType={noteType}");
+                Debug.Log($"[ThemeMeshCache] ExtractFromTheme: themeNote is null");
                 return;
             }
 
-            // Instantiate to read components
-            var instance = GameObject.Instantiate(themeModel);
-            try
+            var noteType = themeNote.NoteType;
+
+            var coloredGroups = ExtractGroupsFromEntries(themeNote.ColoredMaterials, themeNote.transform);
+            var noStarPowerGroups = ExtractGroupsFromEntries(themeNote.ColoredMaterialsNoStarPower, themeNote.transform);
+            var metalGroups = ExtractGroupsFromEntries(themeNote.ColoredMetalMaterials, themeNote.transform);
+
+            Debug.Log($"[ThemeMeshCache] Extracted: theme='{themeName}', noteType={noteType}, sp={themeNote.StarPowerVariant}, colored={coloredGroups.Length}, noSP={noStarPowerGroups.Length}, metal={metalGroups.Length}");
+
+            // Store in cache
+            s_cache[(themeName, noteType, themeNote.StarPowerVariant)] = new ThemeRenderData
             {
-                var themeNote = instance.GetComponent<ThemeNote>();
-                if (themeNote == null)
-                {
-                    Debug.LogError($"[ThemeMeshCache] ExtractFromTheme: no ThemeNote component on instantiated '{themeModel.name}' for noteType={noteType}");
-                    return;
-                }
-
-                var coloredGroups = ExtractGroupsFromEntries(themeNote.ColoredMaterials, instance.transform);
-                var noStarPowerGroups = ExtractGroupsFromEntries(themeNote.ColoredMaterialsNoStarPower, instance.transform);
-                var metalGroups = ExtractGroupsFromEntries(themeNote.ColoredMetalMaterials, instance.transform);
-
-                Debug.LogError($"[ThemeMeshCache] Extracted: theme='{themeName}', noteType={noteType}, sp={themeNote.StarPowerVariant}, colored={coloredGroups.Length}, noSP={noStarPowerGroups.Length}, metal={metalGroups.Length}");
-
-                // Store in cache
-                s_cache[(themeName, noteType, themeNote.StarPowerVariant)] = new ThemeRenderData
-                {
-                    Colored = coloredGroups,
-                    NoStarPower = noStarPowerGroups,
-                    Metal = metalGroups
-                };
-            }
-            finally
-            {
-                GameObject.DestroyImmediate(instance);
-            }
+                Colored = coloredGroups,
+                NoStarPower = noStarPowerGroups,
+                Metal = metalGroups
+            };
         }
 
         /// <summary>
@@ -109,14 +94,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var material = materials[entry.MaterialIndex];
                 if (material == null) continue;
 
-                // TEMP: swap to DOTS-compatible test shader for BRG verification
-                // var dotsShader = Shader.Find("YARG/NoteBRGUnlit");
-                // if (dotsShader != null)
-                // {
-                //     var testMat = new Material(dotsShader);
-                //     testMat.CopyPropertiesFromMaterial(material);
-                //     material = testMat;
-                // }
 
                 // Compute mesh-local offset: world → root → mesh
                 var meshLocalOffset = rootTransform.worldToLocalMatrix * entry.Mesh.localToWorldMatrix;
@@ -140,15 +117,6 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal static ThemeRenderData GetRenderGroups(string themeName, ThemeNoteType noteType, bool isStarPowerVisible)
         {
-            // Debug: log first call
-            if (!_hasLoggedFirstCall)
-            {
-                _hasLoggedFirstCall = true;
-                Debug.LogError($"[ThemeMeshCache] GetRenderGroups called: theme='{themeName}', noteType={noteType}, sp={isStarPowerVisible}. Cache size: {s_cache.Count}");
-                foreach (var k in s_cache.Keys)
-                    Debug.LogError($"[ThemeMeshCache]   Key: ({k.Item1}, {k.Item2}, {k.Item3}), Colored={s_cache[k].Colored?.Length ?? -1}, NoSP={s_cache[k].NoStarPower?.Length ?? -1}, Metal={s_cache[k].Metal?.Length ?? -1}");
-            }
-
             // Try exact match first
             if (s_cache.TryGetValue((themeName, noteType, isStarPowerVisible), out var data))
                 return data;
@@ -174,35 +142,27 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, false), out data))
                 return data;
 
-            // Debug: log cache keys on first miss
-            if (!_hasLoggedCacheMiss)
-            {
-                _hasLoggedCacheMiss = true;
-                Debug.LogError($"[ThemeMeshCache] Lookup miss: theme='{themeName}', noteType={noteType}, sp={isStarPowerVisible}. Cache keys: {string.Join(", ", s_cache.Keys.Select(k => $"({k.Item1}, {k.Item2}, {k.Item3})"))}");
-            }
             return default;
         }
-
-        private static bool _hasLoggedCacheMiss;
-        private static bool _hasLoggedFirstCall;
 
         /// <summary>
         /// Extracts all note types from a theme's note prefabs.
         /// Call after theme prefabs are resolved, before first NoteTracker.Add().
+        /// The caller instantiates the prefabs and passes ThemeNote components.
         /// </summary>
-        internal static void ExtractTheme(string themeName, Dictionary<ThemeNoteType, GameObject> models,
-            Dictionary<ThemeNoteType, GameObject> starPowerModels)
+        internal static void ExtractTheme(string themeName, Dictionary<ThemeNoteType, ThemeNote> models,
+            Dictionary<ThemeNoteType, ThemeNote> starPowerModels)
         {
             // Extract normal models
             foreach (var kvp in models)
             {
-                ExtractFromTheme(themeName, kvp.Value, kvp.Key);
+                ExtractFromTheme(themeName, kvp.Value);
             }
 
             // Extract SP models
             foreach (var kvp in starPowerModels)
             {
-                ExtractFromTheme(themeName, kvp.Value, kvp.Key);
+                ExtractFromTheme(themeName, kvp.Value);
             }
 
             s_extractedThemes.Add(themeName);

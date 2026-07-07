@@ -11,6 +11,7 @@ using YARG.Song;
 
 namespace YARG
 {
+#if YARG_TEST_BUILD
     /// <summary>
     /// Runtime automation for the built player.
     /// Triggered via command-line argument:
@@ -241,4 +242,5 @@ namespace YARG
             }
         }
     }
+#endif
 }

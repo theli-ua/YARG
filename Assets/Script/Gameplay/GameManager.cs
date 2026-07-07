@@ -36,10 +36,6 @@ namespace YARG.Gameplay
     [DefaultExecutionOrder(-1)]
     public partial class GameManager : MonoBehaviour
     {
-        /// <summary>
-        /// Strong reference to prevent HighwayElementGraphicsSystem from being garbage collected.
-        /// </summary>
-        internal static HighwayElementGraphicsSystem HighwayElementGraphicsSystemRef { get; set; }
         public const double SONG_START_DELAY = SongRunner.SONG_START_DELAY;
         public const double SONG_END_DELAY = SONG_START_DELAY;
 

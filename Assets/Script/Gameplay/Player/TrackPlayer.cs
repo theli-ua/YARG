@@ -271,27 +271,31 @@ namespace YARG.Gameplay.Player
 
             FinishInitialization();
 
-            // Extract theme meshes for instanced rendering
-            // NotePool.Prefab is the theme note prefab with ThemeNote children
-            var themeModels = new System.Collections.Generic.Dictionary<ThemeNoteType, GameObject>();
-            var spModels = new System.Collections.Generic.Dictionary<ThemeNoteType, GameObject>();
-            GameObject instance = null;
+            // Extract theme meshes for instanced rendering.
+            // Instantiate the prefab once, collect ThemeNote components, pass to ExtractTheme.
+            // Single instantiation: caller creates the instance, ExtractTheme uses it directly.
+            var themeModels = new System.Collections.Generic.Dictionary<ThemeNoteType, ThemeNote>();
+            var spModels = new System.Collections.Generic.Dictionary<ThemeNoteType, ThemeNote>();
             if (NotePool?.Prefab != null)
             {
-                instance = GameObject.Instantiate(NotePool.Prefab);
-                foreach (var themeNote in instance.GetComponentsInChildren<ThemeNote>(true))
+                var instance = GameObject.Instantiate(NotePool.Prefab);
+                try
                 {
-                    if (themeNote.StarPowerVariant)
-                        spModels[themeNote.NoteType] = themeNote.gameObject;
-                    else
-                        themeModels[themeNote.NoteType] = themeNote.gameObject;
+                    foreach (var themeNote in instance.GetComponentsInChildren<ThemeNote>(true))
+                    {
+                        if (themeNote.StarPowerVariant)
+                            spModels[themeNote.NoteType] = themeNote;
+                        else
+                            themeModels[themeNote.NoteType] = themeNote;
+                    }
+                }
+                finally
+                {
+                    GameObject.DestroyImmediate(instance);
                 }
             }
             var themeName = Player.ThemePreset?.Name ?? "Unknown";
             ThemeMeshCache.ExtractTheme(themeName, themeModels, spModels);
-            // Destroy the instance after extraction so the child GameObjects
-            // remain valid while ExtractFromTheme instantiates copies.
-            GameObject.DestroyImmediate(instance);
             Debug.Log($"[TrackPlayer{HighwayIndex}] ThemeMeshCache: {themeModels.Count} normal + {spModels.Count} SP models for '{themeName}'");
 
             // Initialize NoteTracker for instanced rendering

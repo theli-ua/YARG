@@ -5,6 +5,8 @@ using UnityEngine;
 
 namespace YARG.Gameplay.Visuals.Instancing
 {
+    // Adapted from com.unity.entities.graphics HeapAllocator.cs. SPDX-License-Identifier: BSD-3-Clause
+
     /// <summary>
     /// Represents a block of memory that you can use in a HeapAllocator to manage memory.
     /// </summary>
