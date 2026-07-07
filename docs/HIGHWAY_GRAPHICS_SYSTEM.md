@@ -119,7 +119,7 @@ Per-TrackPlayer manager for active notes. Flat arrays, no per-note GameObjects.
 
 **Data structures:**
 - `NativeArray<NoteData> _notes` — per-note color/flag data (68 bytes each)
-- `NativeArray<NoteSpawnData> _spawnData` — per-note spawn-time data (20 bytes each currently; will grow when per-instrument `scale` Vector3 is added)
+- `NativeArray<NoteSpawnData> _spawnData` — per-note spawn-time data (28 bytes each)
 - `NoteBatchAssignment[][] _batchAssignments` — note index → batch assignments (3 per note: Colored/NoStarPower/Metal)
 - `object[] _noteObjects` — chart note references for reverse lookup
 - `Dictionary<object, int> _noteToIndex` — chart note → flat index for hit/miss
@@ -134,18 +134,22 @@ Per-TrackPlayer manager for active notes. Flat arrays, no per-note GameObjects.
 - `Vector2 randomVector` — random 2D vector for theme variation
 - `uint packedFlags` — bitfield: noteType (8 bits), isStarPower, isSustain, isOpenNote
 
-**NoteSpawnData** (20 bytes, blittable):
+**NoteSpawnData** (28 bytes, blittable):
 - `float noteHitTime` — chart note's hit time (for Z position)
 - `float baseX` — pre-computed X from GetElementX with lefty-flip
-- `float noteHeight` — captured from HighwayPreset at spawn (will become `Vector3 scale` when per-instrument scale is implemented)
+- `Vector3 scale` — per-instrument scale (replaces `noteHeight` float). Guitar/ProKeys: `S(1, noteHeight, 1)`, FiveLaneKeys: `S(5/6, noteHeight*5/6, 1)`, Drums: `S(NoteScaleFactor, noteHeight*NoteScaleFactor, NoteScaleFactor)`
 - `ThemeNoteType noteType` — for render group lookup
 - `bool isStarPowerVisible` — captured at spawn
+- `byte colorIndex` — fret/pad/key index for dynamic color lookups (SP activation)
+- `bool isStarPowerActivator` — drums SP-activator flag for pulse effect
 
-**Per-frame update cycle:**
+**Per-frame update cycle (in `TrackPlayer.GameplayUpdate`):**
 1. `UpdatePositions()` — no-op (Z is computed in `UploadToGPU` where `trackLocalToWorld` is available)
 2. `RemoveExpired()` — backward iteration, swap-remove notes with `z < -4`. No managed allocations (no `List<int>`).
 3. `UpdateBatchAssignments()` — no-op placeholder (SP mesh variant switching is deferred)
-4. `UploadToGPU(trackLocalToWorld)` — calls `BeginUploadFrame`, iterates active notes, computes `worldMatrix = trackLocalToWorld × T(baseX,0,z) × S(1,scale,1) × batch.meshLocalOffset`, writes to `batch.activeCount` slot (shared-batch append), flushes via `UploadDirtyData`
+4. **SP activation color update** — if `Engine.BaseStats.IsStarPowerActive` changed since last frame, call `NoteTracker.UpdateStarPowerColors()` to recompute `color` and `metalColor` for in-flight SP-visible notes
+5. **Drums SP-activator pulse** — `TrackPlayer.UpdateStarPowerActivatorPulse()` (virtual, no-op default). `DrumsPlayer` overrides to pulse SP-activator note colors based on `StrongBeat.CurrentPercentage`
+4. `UploadToGPU(trackLocalToWorld)` — calls `BeginUploadFrame`, iterates active notes, computes `worldMatrix = trackLocalToWorld × T(baseX,0,z) × S(spawn.scale) × batch.meshLocalOffset`, writes to `batch.activeCount` slot (shared-batch append), flushes via `UploadDirtyData`
 
 **Hit/miss lifecycle:**
 - On hit (non-sustain) or miss: `NoteTracker.TryRemoveByNote(chartNote)` — swap-removes from CPU arrays. `batch.activeCount` is NOT decremented (rebuilt next frame by `UploadToGPU`).
@@ -242,10 +246,11 @@ Emission properties are constant (set on the material), not per-instance.
 ## Known Limitations
 
 1. **No Burst job parallelism** — all AddUpload calls are main-thread. EGS uses ThreadedSparseUploader for job-parallel uploads.
-2. **No per-instance emission** — emission is material-level constant. SP-activator pulse and dynamic emission changes don't work with BRG. (Planned: Task 10.1/10.2 in openspec for SP color updates via `NoteData.color` mutation.)
+2. **No per-instance emission** — emission is material-level constant. SP color updates and SP-activator pulse work via `NoteData.color` mutation (Tasks 10.1/10.2 implemented).
 3. **Single GraphicsBuffer** — no dynamic growth mechanism. 2 MB initial size covers typical scenarios (~36 batches). If exhausted, `HeapAllocator.Allocate` returns empty block.
 4. **No frustum culling** — all notes within the highway bounds are rendered (huge global bounds prevent BRG from culling anything).
-5. **Sustain lines still use GameObjects** — only note heads are instanced.
-6. **Per-instrument scale not yet implemented** — `UploadToGPU` uses `S(1, noteHeight, 1)` for all instruments. Drums `NoteScaleFactor` and FiveLaneKeys `5/6` scale are missing (Task 10.3).
-7. **SP mesh variant switching not implemented** — `UpdateBatchAssignments` is a no-op. SP notes use the mesh captured at spawn; SP color updates are planned (Task 10.1).
-8. **SP-activator pulse not implemented** — drums SP-activator notes don't pulse (Task 10.2).
+5. **Sustain lines still use GameObjects** — only note heads are instanced. Sustain lines remain as GameObject-based `SustainLine` components (deferred to future change).
+6. **Beatlines still use GameObjects** — beatline instancing is deferred. Beatlines remain as GameObject-based `BeatlineElement` components. The `HighwayElementGraphicsSystem` architecture supports adding beatlines without changes.
+7. **Per-instrument scale implemented** (Task 10.3). `NoteSpawnData.scale` (Vector3) replaces `noteHeight` (float). Per-instrument `CreateNoteSpawnData` computes correct scale: Guitar/ProKeys use `S(1, noteHeight, 1)`, FiveLaneKeys uses `S(5/6, noteHeight*5/6, 1)` when not using open lane, Drums uses `S(NoteScaleFactor, noteHeight*NoteScaleFactor, NoteScaleFactor)` for non-kick/non-wildcard pads.
+8. **SP mesh variant switching deferred** (Task 10.4). `UpdateBatchAssignments` is a no-op. SP notes use the mesh captured at spawn. SP *color* updates (Task 10.1) provide the primary visual feedback; SP *mesh* switching (different geometry) is secondary and deferred.
+9. **SP-activator pulse implemented** (Task 10.2). Drums SP-activator notes pulse their color each frame based on `StrongBeat.CurrentPercentage` via `NoteTracker.PulseStarPowerActivators()`.

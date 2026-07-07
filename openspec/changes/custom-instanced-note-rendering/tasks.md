@@ -111,7 +111,7 @@
 ## 8. Decommission GameObject note system — PARTIAL
 
 - [x] 8.1 `dualRenderMode = false` by default (production).
-- [ ] 8.2 Document that GameObject notes remain for sustain lines and beatlines (deferred).
+- [x] 8.2 Document that GameObject notes remain for sustain lines and beatlines (deferred).
 - [x] 8.3 Clean up unused theme model GameObject references after full migration.
 - [x] 8.4 Remove `TrackElement.LeftyFlipMultiplier` and `TrackElement.LeftyFlip` (dead code — zero call sites, lane-remapping approach makes them misleading).
 
@@ -268,7 +268,7 @@ These tasks address issues identified during code review. They are ordered by pr
 - [ ] 11.7 Test on Steam Deck — frame time improvement, no visual regressions.
 - [ ] 11.8 Test with dense charts — no performance regression at high note density. Use a chart with 500+ simultaneous notes.
 - [ ] 11.9 Test all instruments — guitar (5-fret), drums (4-lane, 5-lane), keys (5-lane), ProKeys. Verify per-instrument scale (after Task 10.3), color resolution, SP-activation color flip (after Task 10.1), drums SP-activator pulse (after Task 10.2).
-- [ ] 11.10 Add debug toggle for `dualRenderMode` (gameplay settings or console command) for A/B visual comparison.
+- [x] 11.10 Add debug toggle for `dualRenderMode` (gameplay settings or console command) for A/B visual comparison.
 - [ ] 11.11 Visual A/B comparison in dual mode — position and color parity between GameObject and BRG notes.
 - [ ] 11.12 Verify zero GC allocations per frame in `UploadToGPU`, `RemoveExpired`, `OnPerformCulling` (use Unity Profiler memory module).
 - [ ] 11.13 Verify `GraphicsBuffer` doesn't exhaust — test with dense chart, multiple players. Check for `[HEGS] BATCH OVERFLOW` or heap allocation failure warnings in Player.log.
