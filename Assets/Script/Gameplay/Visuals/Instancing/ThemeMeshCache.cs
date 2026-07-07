@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using YARG.Themes;
 
@@ -113,7 +114,7 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         /// <summary>
         /// Gets render groups for a theme/type/SP state combination.
-        /// Falls back to non-SP groups if SP variant is absent.
+        /// Falls back to non-SP groups if SP variant is absent, and to Wildcard type if specific type absent.
         /// </summary>
         internal static ThemeRenderData GetRenderGroups(string themeName, ThemeNoteType noteType, bool isStarPowerVisible)
         {
@@ -121,27 +122,21 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (s_cache.TryGetValue((themeName, noteType, isStarPowerVisible), out var data))
                 return data;
 
-            // Fall back to non-SP if we're looking for SP
-            if (!isStarPowerVisible)
-            {
-                // Try wildcard as last resort
-                if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, false), out var wildcardData))
-                    return wildcardData;
-                return default;
-            }
-
-            // Looking for SP: try non-SP fallback
-            if (s_cache.TryGetValue((themeName, noteType, false), out data))
+            // Try same noteType, opposite SP state
+            bool oppositeSp = !isStarPowerVisible;
+            if (s_cache.TryGetValue((themeName, noteType, oppositeSp), out data))
                 return data;
 
-            // Try wildcard SP
-            if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, true), out data))
+            // Try Wildcard with same SP state
+            if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, isStarPowerVisible), out data))
                 return data;
 
-            // Try wildcard non-SP
-            if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, false), out data))
+            // Try Wildcard with opposite SP state
+            if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, oppositeSp), out data))
                 return data;
 
+            // DEBUG: log cache keys for diagnosing misses
+            Debug.LogWarning($"[ThemeMeshCache] MISS: theme='{themeName}', noteType={noteType}, sp={isStarPowerVisible}. Cache has {s_cache.Count} entries for theme '{themeName}'.");
             return default;
         }
 
@@ -166,6 +161,9 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
 
             s_extractedThemes.Add(themeName);
+
+            var themeKeys = s_cache.Keys.Where(k => k.Item1 == themeName).ToArray();
+            Debug.Log($"[ThemeMeshCache] ExtractTheme: theme='{themeName}', entries={themeKeys.Length}");
         }
 
         /// <summary>

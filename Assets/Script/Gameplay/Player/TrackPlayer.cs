@@ -276,25 +276,27 @@ namespace YARG.Gameplay.Player
             // Single instantiation: caller creates the instance, ExtractTheme uses it directly.
             var themeModels = new System.Collections.Generic.Dictionary<ThemeNoteType, ThemeNote>();
             var spModels = new System.Collections.Generic.Dictionary<ThemeNoteType, ThemeNote>();
+            var themeName = Player.ThemePreset?.Name ?? "Unknown";
             if (NotePool?.Prefab != null)
             {
                 var instance = GameObject.Instantiate(NotePool.Prefab);
-                try
+                var allThemeNotes = instance.GetComponentsInChildren<ThemeNote>(true);
+                Debug.Log($"[TrackPlayer{HighwayIndex}] Extraction: found {allThemeNotes.Length} ThemeNote components in prefab '{NotePool.Prefab.name}'");
+                foreach (var themeNote in allThemeNotes)
                 {
-                    foreach (var themeNote in instance.GetComponentsInChildren<ThemeNote>(true))
-                    {
-                        if (themeNote.StarPowerVariant)
-                            spModels[themeNote.NoteType] = themeNote;
-                        else
-                            themeModels[themeNote.NoteType] = themeNote;
-                    }
+                    if (themeNote.StarPowerVariant)
+                        spModels[themeNote.NoteType] = themeNote;
+                    else
+                        themeModels[themeNote.NoteType] = themeNote;
                 }
-                finally
-                {
-                    GameObject.DestroyImmediate(instance);
-                }
+                // NOTE: Do NOT call DestroyImmediate(instance) here — it invalidates
+                // all Unity object references (ThemeNote components) stored in the
+                // dictionaries. The garbage collector will clean up the instance.
             }
-            var themeName = Player.ThemePreset?.Name ?? "Unknown";
+            else
+            {
+                Debug.LogWarning($"[TrackPlayer{HighwayIndex}] NOTE: NotePool or NotePool.Prefab is null — theme extraction SKIPPED");
+            }
             ThemeMeshCache.ExtractTheme(themeName, themeModels, spModels);
             Debug.Log($"[TrackPlayer{HighwayIndex}] ThemeMeshCache: {themeModels.Count} normal + {spModels.Count} SP models for '{themeName}'");
 
