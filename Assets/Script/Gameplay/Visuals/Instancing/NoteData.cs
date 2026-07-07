@@ -82,7 +82,7 @@ namespace YARG.Gameplay.Visuals.Instancing
     }
 
     /// <summary>
-    /// Per-note spawn-time data for instanced rendering. 32 bytes total.
+    /// Per-note spawn-time data for instanced rendering. 28 bytes total.
     /// Stored in a StructOfArrays layout alongside NoteData for GPU instancing.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
@@ -94,8 +94,8 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// <summary>Pre-computed X from GetElementX(lane, laneCount) with lefty-flip applied.</summary>
         public float baseX;
 
-        /// <summary>YargPlayer.HighwayPreset.NoteHeight captured at spawn.</summary>
-        public float noteHeight;
+        /// <summary>Non-uniform scale for the note instance (X, Y, Z components).</summary>
+        public Vector3 scale;
 
         /// <summary>For render group lookup in ThemeMeshCache.</summary>
         public ThemeNoteType noteType;
@@ -103,11 +103,17 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// <summary>Captured at spawn, updated on SP toggle.</summary>
         public bool isStarPowerVisible;
 
+        /// <summary>True if this note is an SP activator (e.g., drum activation gems).</summary>
+        public bool isStarPowerActivator;
+
+        /// <summary>Color index for fret/pad color lookups (fret for guitar/keys, pad for drums, key for ProKeys).</summary>
+        public byte colorIndex;
+
         public static readonly int Size = UnsafeUtility.SizeOf<NoteSpawnData>();
 
         static NoteSpawnData()
         {
-            Debug.Assert(Size == 20, $"NoteSpawnData.Size must be 20 bytes, got {Size}");
+            Debug.Assert(Size == 28, $"NoteSpawnData.Size must be 28 bytes, got {Size}");
         }
     }
 }

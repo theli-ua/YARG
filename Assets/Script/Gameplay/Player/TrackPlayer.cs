@@ -1235,6 +1235,16 @@ namespace YARG.Gameplay.Player
             TrackView.ShowStarPowerReady();
         }
 
+        /// <summary>
+        /// Per-instrument hook for updating star power activator note pulses.
+        /// Override in instrument-specific players (e.g., DrumsPlayer) to implement pulsing behavior.
+        /// Default: no-op.
+        /// </summary>
+        protected virtual void UpdateStarPowerActivatorPulse()
+        {
+            // Default: no-op. Override in DrumsPlayer for SP-activator pulse.
+        }
+
         public override void GameplayUpdate()
         {
             base.GameplayUpdate();
@@ -1244,6 +1254,17 @@ namespace YARG.Gameplay.Player
                 NoteTracker.UpdatePositions();
                 NoteTracker.RemoveExpired();
                 NoteTracker.UpdateBatchAssignments();
+
+                // Task 10.1: Check for star power state change and update in-flight note colors
+                var stats = Engine.BaseStats;
+                if (stats.IsStarPowerActive != _wasStarPowerActive)
+                {
+                    NoteTracker.UpdateStarPowerColors(stats.IsStarPowerActive);
+                    _wasStarPowerActive = stats.IsStarPowerActive;
+                }
+
+                // Task 10.2: Per-instrument SP activator pulse update
+                UpdateStarPowerActivatorPulse();
 
                 // Upload to GPU — use track's localToWorld matrix
                 if (TrackCamera != null)

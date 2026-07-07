@@ -853,9 +853,11 @@ namespace YARG.Gameplay.Player
             {
                 noteHitTime = (float)note.Time,
                 baseX = baseX,
-                noteHeight = Player.HighwayPreset.NoteHeight,
+                scale = new Vector3(1f, Player.HighwayPreset.NoteHeight, 1f),
                 noteType = ProKeysKeyToThemeNoteType(note.Key, note.ProKeysFlags),
-                isStarPowerVisible = note.IsStarPower
+                isStarPowerVisible = note.IsStarPower,
+                isStarPowerActivator = false,
+                colorIndex = (byte)note.Key
             };
         }
 

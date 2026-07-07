@@ -11,6 +11,7 @@ using YARG.Core.Engine.Drums.Engines;
 using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
+using YARG.Core.Game;
 using YARG.Gameplay.HUD;
 using YARG.Gameplay.Visuals;
 using YARG.Helpers;
@@ -18,6 +19,7 @@ using YARG.Helpers.Extensions;
 using YARG.Menu.HighwayConfiguration;
 using YARG.Player;
 using YARG.Settings;
+using YARG.Playback;
 using YARG.Themes;
 using YARG.Gameplay.Visuals.Instancing;
 using static YARG.Core.Game.ColorProfile;
@@ -123,6 +125,9 @@ namespace YARG.Gameplay.Player
         [Header("Drums Specific")]
         [SerializeField]
         private bool _fiveLaneMode;
+
+        /// <summary>Whether this drums track is in five-lane mode.</summary>
+        public bool IsFiveLaneMode => _fiveLaneMode;
         [SerializeField]
         private FretArray _fretArray;
         [SerializeField]
@@ -1057,13 +1062,30 @@ namespace YARG.Gameplay.Player
                 baseX = ComputeElementX(position, LaneCount);
             }
 
+            // Compute scale: kick and wildcard notes use full scale, others use NoteScaleFactor
+            Vector3 scale;
+            if (isKick && NumberOfDedicatedKickLanes == 0)
+            {
+                scale = new Vector3(1f, Player.HighwayPreset.NoteHeight, 1f);
+            }
+            else if (isWildcard)
+            {
+                scale = new Vector3(1f, Player.HighwayPreset.NoteHeight, 1f);
+            }
+            else
+            {
+                scale = new Vector3(NoteScaleFactor, Player.HighwayPreset.NoteHeight * NoteScaleFactor, NoteScaleFactor);
+            }
+
             return new NoteSpawnData
             {
                 noteHitTime = (float)note.Time,
                 baseX = baseX,
-                noteHeight = Player.HighwayPreset.NoteHeight,
+                scale = scale,
                 noteType = DrumPadToThemeNoteType(note.Pad),
-                isStarPowerVisible = note.IsStarPower
+                isStarPowerVisible = note.IsStarPower,
+                isStarPowerActivator = note.IsStarPowerActivator,
+                colorIndex = GetHighwayOrderingInfo(note.Pad).ColorIndex
             };
         }
 
@@ -1099,6 +1121,26 @@ namespace YARG.Gameplay.Player
             GreenCymbal,
 
             Orange
+        }
+
+        // ---- Task 10.2: SP-activator pulse override ----
+
+        protected override void UpdateStarPowerActivatorPulse()
+        {
+            // Only pulse if SP is not yet active and can be activated
+            if (Engine.BaseStats.IsStarPowerActive || !Engine.CanStarPowerActivate)
+                return;
+
+            // Get beat progress percentage
+            float beatPercentage = (float)GameManager.BeatEventHandler.Visual.StrongBeat.CurrentPercentage;
+
+            // Get color profile
+            var colors = _fiveLaneMode
+                ? Player.ColorProfile.FiveLaneDrums
+                : Player.ColorProfile.FourLaneDrums;
+
+            // Pulse SP-activator notes: lerp between base fret color and SP color
+            NoteTracker?.PulseStarPowerActivators(beatPercentage, colors);
         }
     }
 }

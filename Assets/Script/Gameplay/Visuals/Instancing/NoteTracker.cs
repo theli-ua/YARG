@@ -5,6 +5,7 @@ using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using UnityEngine;
 using YARG.Core.Chart;
+using YARG.Core.Game;
 using YARG.Gameplay.Player;
 using YARG.Themes;
 
@@ -306,11 +307,10 @@ namespace YARG.Gameplay.Visuals.Instancing
                 float z = TrackPlayer.STRIKE_LINE_POS + ((float)(spawn.noteHitTime - visualTime)) * noteSpeed;
 
                 // Build note element local matrix: T(baseX, 0, z) * S(scale)
-                float scale = spawn.noteHeight;
                 Matrix4x4 noteLocal = Matrix4x4.TRS(
                     new Vector3(spawn.baseX, 0f, z),
                     Quaternion.identity,
-                    new Vector3(1f, scale, 1f)
+                    spawn.scale
                 );
 
                 // Upload to ALL batch assignments (all render groups).
@@ -401,6 +401,85 @@ namespace YARG.Gameplay.Visuals.Instancing
             var noteData = _notes[index];
             noteData.color = color;
             _notes[index] = noteData;
+        }
+
+        /// <summary>Set the color of a note by flat index (for SP activator pulse).</summary>
+        internal void SetColorAt(int index, Vector4 color)
+        {
+            if (index < 0 || index >= _activeCount) return;
+            var noteData = _notes[index];
+            noteData.color = color;
+            _notes[index] = noteData;
+        }
+
+        // ---- Task 10.1: SP activation color updates ----
+
+        /// <summary>
+        /// Update colors for all in-flight SP-visible notes when star power state changes.
+        /// Called from TrackPlayer.GameplayUpdate when Engine.BaseStats.IsStarPowerActive toggles.
+        /// </summary>
+        internal void UpdateStarPowerColors(bool isStarPowerActive)
+        {
+            if (_disposed) return;
+
+            // Determine color profile based on instrument type
+            var colors = _trackPlayer switch
+            {
+                DrumsPlayer drums => drums.IsFiveLaneMode
+                    ? _trackPlayer.Player.ColorProfile.FiveLaneDrums
+                    : _trackPlayer.Player.ColorProfile.FourLaneDrums,
+                ProKeysPlayer => _trackPlayer.Player.ColorProfile.ProKeys,
+                FiveLaneKeysPlayer => _trackPlayer.Player.ColorProfile.FiveFretGuitar,
+                FiveFretGuitarPlayer => _trackPlayer.Player.ColorProfile.FiveFretGuitar,
+                _ => _trackPlayer.Player.ColorProfile.FiveFretGuitar // fallback
+            };
+
+            for (int i = 0; i < _activeCount; i++)
+            {
+                if (!_spawnData[i].isStarPowerVisible) continue;
+
+                var noteData = _notes[i];
+
+                // Recompute color based on dynamic SP state
+                noteData.color = isStarPowerActive
+                    ? colors.GetNoteStarPowerColor(_spawnData[i].colorIndex).ToUnityColor()
+                    : colors.GetNoteColor(_spawnData[i].colorIndex).ToUnityColor();
+
+                // Metal color: dynamic for guitar/drums/ProKeys, constant for FiveLaneKeys
+                // FiveLaneKeys: metalColor uses NoteRef.IsStarPower (constant)
+                // Guitar/Drums/ProKeys: metalColor uses dynamic SP state
+                bool isFiveLaneKeys = _trackPlayer is FiveLaneKeysPlayer;
+                if (!isFiveLaneKeys)
+                {
+                    noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
+                }
+
+                _notes[i] = noteData;
+            }
+        }
+
+        // ---- Task 10.2: Drums SP-activator pulse ----
+
+        /// <summary>
+        /// Pulse SP-activator notes by lerping their color based on strong beat progress.
+        /// Each note's color is computed individually using its colorIndex.
+        /// </summary>
+        internal void PulseStarPowerActivators(float beatPercentage, ColorProfile.IFretColorProvider colors)
+        {
+            if (_disposed) return;
+
+            for (int i = 0; i < _activeCount; i++)
+            {
+                if (!_spawnData[i].isStarPowerActivator) continue;
+
+                int colorIdx = _spawnData[i].colorIndex;
+                var baseColor = colors.GetNoteColor(colorIdx).ToUnityColor();
+                var pulseColor = colors.GetNoteStarPowerColor(colorIdx).ToUnityColor();
+
+                var noteData = _notes[i];
+                noteData.color = Vector4.Lerp(baseColor, pulseColor, beatPercentage);
+                _notes[i] = noteData;
+            }
         }
     }
 }

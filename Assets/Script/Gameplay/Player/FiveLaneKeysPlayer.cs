@@ -942,19 +942,25 @@ public override bool ShouldUpdateInputsOnResume => true;
             }
 
             // Scale: FiveLaneKeys uses reduced scale when not using open lane
-            float scale = 1f;
+            Vector3 scale;
             if (!UsingOpenLane && !isOpenOrWildcard)
             {
-                scale = 5f / 6f;
+                scale = new Vector3(5f / 6f, Player.HighwayPreset.NoteHeight * 5f / 6f, 1f);
+            }
+            else
+            {
+                scale = new Vector3(1f, Player.HighwayPreset.NoteHeight, 1f);
             }
 
             return new NoteSpawnData
             {
                 noteHitTime = (float)note.Time,
                 baseX = baseX,
-                noteHeight = Player.HighwayPreset.NoteHeight * scale,
+                scale = scale,
                 noteType = GuitarNoteTypeToThemeNoteType(note.Type, note.Fret),
-                isStarPowerVisible = note.IsStarPower
+                isStarPowerVisible = note.IsStarPower,
+                isStarPowerActivator = false,
+                colorIndex = (byte)note.Fret
             };
         }
 
