@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe;
-using Unity.Jobs;
 using UnityEngine;
 using YARG.Core.Chart;
 using YARG.Core.Engine.Keys;
@@ -111,80 +109,93 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (_gameManager?.Players != null)
                 playerHint = Mathf.Max(1, _gameManager.Players.Count);
 
-            var assignments = new List<NoteBatchAssignment>();
-
-            if (renderData.Colored != null)
+            // Single exact-size array (no List growth / ToArray double alloc).
+            int assignmentCount = CountValidGroups(renderData.Colored)
+                + CountValidGroups(renderData.NoStarPower)
+                + CountValidGroups(renderData.Metal);
+            var assignmentArray = assignmentCount > 0
+                ? new NoteBatchAssignment[assignmentCount]
+                : Array.Empty<NoteBatchAssignment>();
+            int w = 0;
+            w = FillCategoryAssignments(assignmentArray, w, renderData.Colored, NoteDataField.Color,
+                isMetal: false, playerHint, applyEmission: true);
+            w = FillCategoryAssignments(assignmentArray, w, renderData.NoStarPower, NoteDataField.ColorNoStarPower,
+                isMetal: false, playerHint, applyEmission: true);
+            w = FillCategoryAssignments(assignmentArray, w, renderData.Metal, NoteDataField.MetalColor,
+                isMetal: true, playerHint, applyEmission: false);
+            // Batch create can fail → shrink if needed
+            if (w < assignmentArray.Length)
             {
-                for (int i = 0; i < renderData.Colored.Length; i++)
+                if (w == 0)
+                    assignmentArray = Array.Empty<NoteBatchAssignment>();
+                else
                 {
-                    var group = renderData.Colored[i];
-                    var batch = _graphicsSystem.GetOrCreateBatch(
-                        group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID,
-                        _capacity, group.MeshLocalOffset,
-                        group.EmissionAddition, group.EmissionMultiplier, playerHint);
-                    if (batch != null)
-                    {
-                        assignments.Add(new NoteBatchAssignment
-                        {
-                            Batch = batch,
-                            ColorField = NoteDataField.Color,
-                            IsMetal = false
-                        });
-                    }
+                    var trimmed = new NoteBatchAssignment[w];
+                    Array.Copy(assignmentArray, trimmed, w);
+                    assignmentArray = trimmed;
                 }
             }
+            _batchAssignments[index] = assignmentArray;
 
-            if (renderData.NoStarPower != null)
-            {
-                for (int i = 0; i < renderData.NoStarPower.Length; i++)
-                {
-                    var group = renderData.NoStarPower[i];
-                    var batch = _graphicsSystem.GetOrCreateBatch(
-                        group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID,
-                        _capacity, group.MeshLocalOffset,
-                        group.EmissionAddition, group.EmissionMultiplier, playerHint);
-                    if (batch != null)
-                    {
-                        assignments.Add(new NoteBatchAssignment
-                        {
-                            Batch = batch,
-                            ColorField = NoteDataField.ColorNoStarPower,
-                            IsMetal = false
-                        });
-                    }
-                }
-            }
-
-            if (renderData.Metal != null)
-            {
-                for (int i = 0; i < renderData.Metal.Length; i++)
-                {
-                    var group = renderData.Metal[i];
-                    var batch = _graphicsSystem.GetOrCreateBatch(
-                        group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID,
-                        _capacity, group.MeshLocalOffset,
-                        0f, 1f, playerHint);
-                    if (batch != null)
-                    {
-                        assignments.Add(new NoteBatchAssignment
-                        {
-                            Batch = batch,
-                            ColorField = NoteDataField.MetalColor,
-                            IsMetal = true
-                        });
-                    }
-                }
-            }
-
-            _batchAssignments[index] = assignments.ToArray();
-
-            if (assignments.Count == 0)
+            if (assignmentArray.Length == 0)
             {
                 Debug.LogWarning($"[NoteTracker] No render groups found for theme '{_themeName}', noteType={spawnData.noteType}, isStarPower={spawnData.isStarPowerVisible}");
             }
 
             _activeCount++;
             return index;
+        }
+
+        private static int CountValidGroups(RenderGroup[] groups)
+        {
+            if (groups == null) return 0;
+            int n = 0;
+            for (int i = 0; i < groups.Length; i++)
+            {
+                if (groups[i].Mesh != null && groups[i].Material != null)
+                    n++;
+            }
+            return n;
+        }
+
+        private int FillCategoryAssignments(
+            NoteBatchAssignment[] dest,
+            int writeIndex,
+            RenderGroup[] groups,
+            NoteDataField colorField,
+            bool isMetal,
+            int playerHint,
+            bool applyEmission)
+        {
+            if (groups == null || _graphicsSystem == null)
+                return writeIndex;
+
+            for (int i = 0; i < groups.Length; i++)
+            {
+                var group = groups[i];
+                if (group.Mesh == null || group.Material == null)
+                    continue;
+
+                float add = applyEmission ? group.EmissionAddition : 0f;
+                float mul = applyEmission ? group.EmissionMultiplier : 1f;
+                var batch = _graphicsSystem.GetOrCreateBatch(
+                    group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID,
+                    _capacity, group.MeshLocalOffset, add, mul, playerHint);
+                if (batch == null)
+                    continue;
+
+                if (writeIndex >= dest.Length)
+                    break;
+
+                dest[writeIndex++] = new NoteBatchAssignment
+                {
+                    Batch = batch,
+                    ColorField = colorField,
+                    IsMetal = isMetal
+                };
+            }
+
+            return writeIndex;
         }
 
         /// <summary>
@@ -282,16 +293,13 @@ namespace YARG.Gameplay.Visuals.Instancing
             try
             {
                 if (_disposed) return;
+                // BeginUploadFrame is owned by GameManager/TrackViewManager (always once/frame).
+                // Do not early-out on _activeCount==0 before that boundary — and do not Begin here.
                 if (_graphicsSystem == null || _activeCount == 0 || _gameManager == null)
                     return;
 
             double visualTime = _gameManager.VisualTime;
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
-
-            // Reset all batches' activeCount to 0 for this frame (idempotent across trackers).
-            // Batches are SHARED across trackers (same theme → same batch), so this must
-            // run once per frame; subsequent trackers append to the same batches.
-            _graphicsSystem.BeginUploadFrame();
 
             for (int i = 0; i < _activeCount; i++)
             {

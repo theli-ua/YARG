@@ -135,9 +135,8 @@ namespace YARG.Gameplay.Visuals
             // HighwayElementGraphicsSystem integration
             _graphicsSystem = new HighwayElementGraphicsSystem();
             _graphicsSystem.OnCreate();
-
-            // BRG renders for all cameras via SetEnabledViewTypes(Camera).
-            // Camera.batchRendererGroup is not available in this Unity version.
+            // Restrict BRG draws to this highway render camera (not venue / others).
+            _graphicsSystem.SetHighwayCamera(_renderCamera.GetInstanceID());
         }
 
         private void ResetCameras()
@@ -375,6 +374,15 @@ namespace YARG.Gameplay.Visuals
         }
 
         internal HighwayElementGraphicsSystem GraphicsSystem => _graphicsSystem;
+
+        /// <summary>
+        /// Reset batch activeCounts before any NoteTracker.UploadToGPU this frame.
+        /// Prefer calling from GameManager before the player loop (always, even if 0 notes).
+        /// </summary>
+        public void BeginInstancedUploads()
+        {
+            _graphicsSystem?.BeginUploadFrame();
+        }
 
         /// <summary>
         /// Commit pending BRG instance uploads for this frame.

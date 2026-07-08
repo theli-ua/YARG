@@ -187,6 +187,8 @@ namespace YARG.Gameplay.Player
         private double _previousStarPowerAmount;
 
         private bool _wasStarPowerActive;
+        /// <summary>Dedicated SP edge for note color updates (must not share scoop flag write order).</summary>
+        private bool _wasStarPowerActiveForNotes;
         private bool _didLowerTrack;
 
         private static bool _hasLoggedNullCamera;
@@ -1256,18 +1258,19 @@ namespace YARG.Gameplay.Player
             {
                 NoteTracker.RemoveExpired();
 
-                // Task 10.1: Check for star power state change and update in-flight note colors
-                var stats = Engine.BaseStats;
-                if (stats.IsStarPowerActive != _wasStarPowerActive)
+                // SP color edge: dedicated flag — UpdateVisuals already consumes _wasStarPowerActive
+                // for camera scoop before we get here.
+                bool spActive = Engine.BaseStats.IsStarPowerActive;
+                if (spActive != _wasStarPowerActiveForNotes)
                 {
-                    NoteTracker.UpdateStarPowerColors(stats.IsStarPowerActive);
-                    _wasStarPowerActive = stats.IsStarPowerActive;
+                    NoteTracker.UpdateStarPowerColors(spActive);
+                    _wasStarPowerActiveForNotes = spActive;
                 }
 
                 // Task 10.2: Per-instrument SP activator pulse update
                 UpdateStarPowerActivatorPulse();
 
-                // Upload to GPU — use track's localToWorld matrix
+                // Upload to GPU — BeginUploadFrame owned by GameManager boundary.
                 if (TrackCamera != null)
                 {
                     NoteTracker.UploadToGPU(transform.localToWorldMatrix);

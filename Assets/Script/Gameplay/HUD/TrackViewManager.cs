@@ -55,6 +55,15 @@ namespace YARG.Gameplay.HUD
         }
 
         /// <summary>
+        /// Begin BRG upload frame (reset batch activeCount) before any NoteTracker.UploadToGPU.
+        /// Always call even when no notes are active — prevents ghost draws from last frame.
+        /// </summary>
+        public void BeginHighwayInstanceUploads()
+        {
+            _highwayCameraRendering?.BeginInstancedUploads();
+        }
+
+        /// <summary>
         /// Flush BRG instance uploads after all TrackPlayer.GameplayUpdate calls.
         /// Called from GameManager so commit does not depend on HighwayCameraRendering.LateUpdate order.
         /// </summary>

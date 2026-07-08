@@ -534,9 +534,8 @@ public override bool ShouldUpdateInputsOnResume => true;
 
             if (GameManager.Paused) return;
 
-            // Remove from instanced renderer immediately when hit (sustain notes stay until sustain ends)
-            if (!note.IsSustain)
-                NoteTracker?.TryRemoveByNote(note);
+            // Remove BRG head immediately on hit (including sustains — line stays as GameObject).
+            NoteTracker?.TryRemoveByNote(note);
 
             (NotePool.GetByKey(note) as FiveLaneKeysNoteElement)?.HitNote();
 

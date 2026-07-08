@@ -298,6 +298,10 @@ namespace YARG.Gameplay
             BeatEventHandler.Update(_songRunner.SongTime, _songRunner.VisualTime);
             CrowdEventHandler.Update(_songRunner.SongTime);
 
+            // BRG upload boundary: always Begin before trackers (even if 0 notes) so activeCount
+            // cannot stick from the previous frame (ghost notes). Commit once after all uploads.
+            _trackViewManager?.BeginHighwayInstanceUploads();
+
             // Update players
             int totalScore = 0;
             foreach (var player in _players)

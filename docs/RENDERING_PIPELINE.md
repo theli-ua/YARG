@@ -195,7 +195,9 @@ Result: highway geometry areas get fade value, empty areas stay at 1.0. Final co
 
 ### BRG / Hybrid Batch Group notes
 
-Instanced notes (BRG) are drawn in FadePass with the same override material. Frame Debugger will show the material as overridden, but the override only writes alpha at the correct pixels if `HighwaysAlphaMask` loads BRG per-instance transforms:
+Instanced note heads use `HighwayElementGraphicsSystem` (BRG). Draws are filtered to the highway `_renderCamera` only (`viewID` vs `SetHighwayCamera`) so venue/other cameras do not emit note draw commands.
+
+Instanced notes are drawn in FadePass with the same override material. Frame Debugger will show the material as overridden, but the override only writes alpha at the correct pixels if `HighwaysAlphaMask` loads BRG per-instance transforms:
 
 - `#pragma multi_compile _ DOTS_INSTANCING_ON`
 - `UNITY_VERTEX_INPUT_INSTANCE_ID` on vertex inputs
