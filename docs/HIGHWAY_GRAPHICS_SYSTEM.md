@@ -20,12 +20,12 @@ GameManager.Update
 
 GameManager.Update (after all TrackPlayers)  ← primary flush site
     └── TrackViewManager.FlushHighwayInstanceUploads()
-            └── EndUploadFrame()
-                    ├── SparseUploader.Commit()
-                    ├── framesUnused accounting
-                    └── periodic GarbageCollectEmptyBatches (every ~300 frames)
+            └── EndUploadFrame() → SparseUploader.Commit()
     HighwayCameraRendering.LateUpdate → EndUploadFrame backup only
     (Do not rely on HCR LateUpdate alone — missed commits stuck SparseUploader full)
+
+Batch lifetime = HEGS / song session. No mid-gameplay batch GC (time-based free → spikes;
+EGS unreferenced-this-frame thrash under dense rewrite). Dispose tears down all batches.
 
 BRG Culling (render thread)
     └── OnPerformCullingCallback()
@@ -82,8 +82,8 @@ Batches shared across trackers (same theme → same key). Write slot = `batch.ac
 **3. Single commit/frame**
 Trackers only `AddUpload`. `EndUploadFrame()` (HCR `LateUpdate`) commits once.
 
-**4. GC never uses live `activeCount` alone**
-`BeginUploadFrame` zeros counts. GC uses `framesUnused` after `EndUploadFrame`.
+**4. No mid-gameplay batch GC**
+Batches live for the song/session. Free only on HEGS dispose (or explicit `ReleaseAllBatches`).
 
 ### SparseUploader
 

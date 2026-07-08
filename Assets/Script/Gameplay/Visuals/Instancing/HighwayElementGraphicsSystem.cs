@@ -34,8 +34,6 @@ namespace YARG.Gameplay.Visuals.Instancing
         private readonly Dictionary<int, BatchMeshID> _meshIDs = new();
         private readonly Dictionary<int, BatchMaterialID> _materialIDs = new();
 
-        private int _gcFrameCounter;
-
         // 8MB default — multiplayer + multi-mesh themes need headroom beyond 2MB
         private const int InitialBufferSize = 8 * 1024 * 1024;
         private const int MaxBufferSize = 64 * 1024 * 1024;
@@ -99,8 +97,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             public float emissionAddition;
             /// <summary>Theme emission multiplier applied to uploaded emission color.</summary>
             public float emissionMultiplier;
-            /// <summary>Frames since this batch had activeCount &gt; 0 at EndUploadFrame.</summary>
-            public int framesUnused;
             /// <summary>Unity instance IDs used for BatchKey (for re-key after grow).</summary>
             public int meshKey;
             public int matKey;
@@ -192,11 +188,17 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             _disposed = true;
 
+            // Tear down BRG first (owns draw state). Heap/buffer freed below;
+            // no mid-gameplay batch GC — lifetime is whole song/session.
             if (_brg != null)
             {
                 _brg.Dispose();
                 _brg = null;
             }
+
+            _batches.Clear();
+            _meshIDs.Clear();
+            _materialIDs.Clear();
 
             if (_gpuBuffer != null)
             {
@@ -215,10 +217,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 _sparseUploader.Dispose();
                 _sparseUploader = null;
             }
-
-            _batches.Clear();
-            _meshIDs.Clear();
-            _materialIDs.Clear();
         }
 
         #endregion
@@ -422,7 +420,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 meshLocalOffset = meshLocalOffset,
                 emissionAddition = emissionAddition,
                 emissionMultiplier = emissionMultiplier,
-                framesUnused = 0,
                 meshKey = meshKey,
                 matKey = matKey,
                 sourceRendererID = sourceRendererID
@@ -497,21 +494,17 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         /// <summary>
-        /// Removes batches unused for many frames. Must NOT use live activeCount alone —
-        /// BeginUploadFrame zeros all counts every frame.
+        /// Explicit teardown of all batches. Not for mid-gameplay use.
+        /// Highway batch set is small and theme-stable for a song; time-based bulk
+        /// GC causes frame spikes, and EGS-style same-frame unreferenced GC thrash
+        /// under dense rewrite (activeCount often 0 between notes). Lifetime = HEGS.
         /// </summary>
-        internal void GarbageCollectEmptyBatches(int unusedFrameThreshold = 600)
+        internal void ReleaseAllBatches()
         {
-            if (_disposed) return;
+            if (_disposed || _brg == null) return;
 
-            var keysToRemove = new List<BatchKey>();
-            foreach (var kvp in _batches)
-            {
-                if (kvp.Value.framesUnused >= unusedFrameThreshold)
-                    keysToRemove.Add(kvp.Key);
-            }
-
-            foreach (var key in keysToRemove)
+            var keys = new List<BatchKey>(_batches.Keys);
+            foreach (var key in keys)
                 RemoveBatch(key);
         }
 
@@ -561,22 +554,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             try
             {
                 CommitUploadsOnly();
-
-                foreach (var batch in _batches.Values)
-                {
-                    if (batch.activeCount > 0)
-                        batch.framesUnused = 0;
-                    else
-                        batch.framesUnused++;
-                }
-
-                // Periodic GC of long-unused batches (not every frame; uses framesUnused).
-                _gcFrameCounter++;
-                if (_gcFrameCounter >= 300)
-                {
-                    _gcFrameCounter = 0;
-                    GarbageCollectEmptyBatches(600);
-                }
             }
             finally
             {
