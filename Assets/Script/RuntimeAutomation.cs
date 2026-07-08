@@ -7,6 +7,7 @@ using UnityEngine.Events;
 using UnityEngine.SceneManagement;
 using YARG.Gameplay;
 using YARG.Menu.Persistent;
+using YARG.Core.Song;
 using YARG.Song;
 
 namespace YARG
@@ -19,12 +20,14 @@ namespace YARG
     ///   -automationDuration N     - Seconds to run (default: 15)
     ///   -automationScreenshotDir "path" - Directory for screenshots
     ///   -automationSongIndex N    - Song index to play (default: 0 = first song, alphabetically ordered)
+    ///   -automationSongName "name" - Song name to play (case-insensitive match; overrides -automationSongIndex)
     /// </summary>
     public class RuntimeAutomation : MonoBehaviour
     {
         private int _duration = 15;
         private string _screenshotDir = "AutomationScreenshots";
         private int _songIndex = 0;
+        private string _songName = null;
 
         private void Awake()
         {
@@ -63,9 +66,14 @@ namespace YARG
                     _songIndex = si;
                     i++;
                 }
+                else if (args[i] == "-automationSongName")
+                {
+                    _songName = args[i + 1];
+                    i++;
+                }
             }
 
-            Debug.Log($"[RuntimeAutomation] Duration: {_duration}s, Song Index: {_songIndex}");
+            Debug.Log($"[RuntimeAutomation] Duration: {_duration}s, Song Index: {_songIndex}, Song Name: {_songName ?? "(none)"}");
 
             // Start coroutine — do NOT block the main thread
             StartCoroutine(RunAutomationWithSongWait());
@@ -98,13 +106,39 @@ namespace YARG
 
         private IEnumerator RunAutomation()
         {
-            // Set the song to load (alphabetically ordered)
+            // Set the song to load
             if (GlobalVariables.State.CurrentSong == null && SongContainer.Songs.Any())
             {
                 var ordered = SongContainer.Songs.OrderBy(s => s.Name).ToArray();
-                var song = _songIndex < ordered.Length ? ordered[_songIndex] : ordered[0];
+                SongEntry song = null;
+
+                // If song name specified, find by name (case-insensitive)
+                if (!string.IsNullOrEmpty(_songName))
+                {
+                    song = ordered.FirstOrDefault(s => ((string)s.Name).IndexOf(_songName, StringComparison.OrdinalIgnoreCase) >= 0);
+                    if (song != null)
+                    {
+                        Debug.Log($"[RuntimeAutomation] Matched song by name \"{_songName}\": {song.Name} by {song.Artist}");
+                    }
+                    else
+                    {
+                        Debug.LogError($"[RuntimeAutomation] No song matching \"{_songName}\" found. Available songs:");
+                        foreach (var s in ordered)
+                        {
+                            Debug.Log($"  - {s.Name} by {s.Artist}");
+                        }
+                        Application.Quit(1);
+                        yield break;
+                    }
+                }
+                else
+                {
+                    // Fall back to index-based selection
+                    song = _songIndex < ordered.Length ? ordered[_songIndex] : ordered[0];
+                    Debug.Log($"[RuntimeAutomation] Selected song by index {_songIndex}: {song.Name} by {song.Artist}");
+                }
+
                 GlobalVariables.State.CurrentSong = song;
-                Debug.Log($"[RuntimeAutomation] Setting song: {song.Name} by {song.Artist}");
             }
             else if (GlobalVariables.State.CurrentSong != null)
             {
