@@ -182,8 +182,12 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         // --- Public API (backward compatible) ---
 
+        /// <summary>True while a compute-path intermediate buffer is locked with pending ops/data.</summary>
+        public bool HasPendingComputeUploads => m_ShaderAvailable && m_UploadBufferPtr != null;
+
         /// <summary>
         /// Adds a new pending upload operation.
+        /// If the intermediate buffer is full, commits the current chunk and retries once.
         /// </summary>
         public void AddUpload(void* src, int size, int offsetInBytes, int repeatCount = 1)
         {
@@ -191,26 +195,38 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (m_ShaderAvailable)
             {
-                // EGS: allocate fresh buffer from pool each frame, lock for write
-                if (m_UploadBufferPtr == null)
+                EnsureComputeBufferLocked();
+
+                if (!TryAddUploadLocked(m_UploadBufferPtr, src, size, offsetInBytes, repeatCount))
                 {
-                    // Pick next buffer from ring (cycling through pool)
-                    m_CurrBufferIndex = (m_CurrBufferIndex + 1) % m_UploadBufferCount;
-                    var buffer = m_UploadBuffers[m_CurrBufferIndex];
-
-                    // LockBufferForWrite acts as sync point — blocks until GPU is done with this buffer
-                    var lockResult = buffer.LockBufferForWrite<byte>(0, m_BufferChunkSize);
-                    m_UploadBufferPtr = (byte*)lockResult.GetUnsafePtr();
-                    m_OperationOffset = 0;
-                    m_DataOffset = 0;
+                    // Intermediate buffer full mid-frame — flush and open next ring slot.
+                    CommitCompute();
+                    EnsureComputeBufferLocked();
+                    if (!TryAddUploadLocked(m_UploadBufferPtr, src, size, offsetInBytes, repeatCount))
+                    {
+                        Debug.LogError(
+                            $"[SparseUploader] Upload still full after commit " +
+                            $"(size={size}, chunk={m_BufferChunkSize}). Dropping upload.");
+                    }
                 }
-
-                AddUploadLocked(m_UploadBufferPtr, src, size, offsetInBytes, repeatCount);
             }
             else
             {
                 AddUploadDirect(src, size, offsetInBytes, repeatCount);
             }
+        }
+
+        private void EnsureComputeBufferLocked()
+        {
+            if (m_UploadBufferPtr != null)
+                return;
+
+            m_CurrBufferIndex = (m_CurrBufferIndex + 1) % m_UploadBufferCount;
+            var buffer = m_UploadBuffers[m_CurrBufferIndex];
+            var lockResult = buffer.LockBufferForWrite<byte>(0, m_BufferChunkSize);
+            m_UploadBufferPtr = (byte*)lockResult.GetUnsafePtr();
+            m_OperationOffset = 0;
+            m_DataOffset = 0;
         }
 
         /// <summary>
@@ -262,7 +278,8 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// EGS: writes operation + data into the locked intermediate buffer.
         /// Operations grow from buffer start, data grows from buffer end.
         /// </summary>
-        private void AddUploadLocked(byte* buffer, void* src, int size, int offsetInBytes, int repeatCount)
+        /// <returns>False if ops+data would collide (caller should Commit and retry).</returns>
+        private bool TryAddUploadLocked(byte* buffer, void* src, int size, int offsetInBytes, int repeatCount)
         {
             // Match EGS: one Operation with count=repeatCount (GPU repeats the copy).
             // Ops grow from buffer start; data grows from buffer end. Must not meet.
@@ -270,14 +287,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             int newOpOffset = m_OperationOffset + opSize;
             int newDataOffset = m_DataOffset + size;
 
-            // Collision / OOM: ops region would overlap data region.
             if (newOpOffset + newDataOffset > m_BufferChunkSize)
-            {
-                Debug.LogError(
-                    $"[SparseUploader] Upload buffer full (ops={m_OperationOffset}, data={m_DataOffset}, " +
-                    $"need op+data={opSize + size}, chunk={m_BufferChunkSize}). Dropping upload.");
-                return;
-            }
+                return false;
 
             int srcOffset = m_BufferChunkSize - newDataOffset;
 
@@ -289,12 +300,12 @@ namespace YARG.Gameplay.Visuals.Instancing
             op.type = 0; // OperationType.Upload
             op.srcOffset = (uint)srcOffset;
             op.dstOffset = (uint)offsetInBytes;
-            // EGS compute path: size is per-element; count repeats into dest with stride=size
             op.size = (uint)size;
             op.count = (uint)repeatCount;
 
             UnsafeUtility.MemCpy(buffer + m_OperationOffset, &op, opSize);
             m_OperationOffset = newOpOffset;
+            return true;
         }
 
         private void CommitCompute()
@@ -309,14 +320,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             {
                 // EGS: UnlockBufferAfterWrite makes staged data visible to GPU
                 buffer.UnlockBufferAfterWrite<byte>(m_BufferChunkSize);
-
                 DispatchUploads(numOps, buffer);
-
-                // Reset offsets after dispatch — critical: prevents unbounded growth → buffer overflow
-                m_OperationOffset = 0;
-                m_DataOffset = 0;
-
-                // Track frame for buffer recovery
                 m_CurrUploadBufferFrame = Time.renderedFrameCount;
             }
             else
@@ -324,7 +328,12 @@ namespace YARG.Gameplay.Visuals.Instancing
                 buffer.UnlockBufferAfterWrite<byte>(0);
             }
 
+            // Always clear lock state. Next AddUpload re-locks a ring buffer and
+            // must start ops/data from 0 — without this, a reused locked buffer
+            // (or a missed null-check path) would grow offsets until ops/data collide.
             m_UploadBufferPtr = null;
+            m_OperationOffset = 0;
+            m_DataOffset = 0;
         }
 
         /// <summary>

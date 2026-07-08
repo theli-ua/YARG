@@ -54,6 +54,15 @@ namespace YARG.Gameplay.HUD
             _highwayCameraRendering.AddTrackPlayer(trackPlayer);
         }
 
+        /// <summary>
+        /// Flush BRG instance uploads after all TrackPlayer.GameplayUpdate calls.
+        /// Called from GameManager so commit does not depend on HighwayCameraRendering.LateUpdate order.
+        /// </summary>
+        public void FlushHighwayInstanceUploads()
+        {
+            _highwayCameraRendering?.FlushInstancedUploads();
+        }
+
         protected override void GameplayDestroy()
         {
         }

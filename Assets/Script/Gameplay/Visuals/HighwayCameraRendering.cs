@@ -386,6 +386,15 @@ namespace YARG.Gameplay.Visuals
 
         internal HighwayElementGraphicsSystem GraphicsSystem => _graphicsSystem;
 
+        /// <summary>
+        /// Commit pending BRG instance uploads for this frame.
+        /// Prefer calling from GameManager after all players update.
+        /// </summary>
+        public void FlushInstancedUploads()
+        {
+            _graphicsSystem?.EndUploadFrame();
+        }
+
         public void AddVocalTrack(VocalTrack vocalTrack, int highwayIndex)
         {
             var camera = vocalTrack.GetTrackCamera();
@@ -531,8 +540,8 @@ namespace YARG.Gameplay.Visuals
                 ToggleDualRenderMode();
             }
 
-            // All TrackPlayer.GameplayUpdate calls run in GameManager.Update.
-            // Commit BRG instance uploads once per frame after every tracker has written.
+            // Backup flush — primary is GameManager → TrackViewManager.FlushHighwayInstanceUploads
+            // after all TrackPlayer.GameplayUpdate calls (do not rely on this alone).
             _graphicsSystem?.EndUploadFrame();
 
             if (!_allowTextureRecreation)

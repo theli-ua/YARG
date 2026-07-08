@@ -544,6 +544,11 @@ namespace YARG.Gameplay.Visuals.Instancing
                 if (_disposed) return;
                 int frame = Time.frameCount;
                 if (_uploadFrame == frame) return;
+
+                // Safety: if EndUploadFrame was skipped last frame, flush leftover first.
+                if (_uploadsOpen || (_sparseUploader != null && _sparseUploader.HasPendingComputeUploads))
+                    CommitUploadsOnly();
+
                 _uploadFrame = frame;
                 _uploadsOpen = true;
                 foreach (var batch in _batches.Values)
@@ -558,6 +563,8 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// <summary>
         /// Commits pending SparseUploader ops once per frame after all trackers uploaded.
         /// Updates unused-frame counters for safe GC.
+        /// Must be called from a reliable main-thread site after all NoteTracker.UploadToGPU
+        /// (GameManager after player loop). HCR LateUpdate is a backup only.
         /// </summary>
         internal void EndUploadFrame()
         {
@@ -566,11 +573,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             UnityEngine.Profiling.Profiler.BeginSample("HEGS.EndUploadFrame");
             try
             {
-                if (_uploadsOpen)
-                {
-                    _sparseUploader?.Commit();
-                    _uploadsOpen = false;
-                }
+                CommitUploadsOnly();
 
                 foreach (var batch in _batches.Values)
                 {
@@ -584,6 +587,22 @@ namespace YARG.Gameplay.Visuals.Instancing
             {
                 UnityEngine.Profiling.Profiler.EndSample();
             }
+        }
+
+        private void CommitUploadsOnly()
+        {
+            if (_sparseUploader == null)
+            {
+                _uploadsOpen = false;
+                return;
+            }
+
+            // Commit if we opened a frame OR the uploader still holds a locked buffer
+            // (covers auto mid-frame commits that left a new lock open).
+            if (_uploadsOpen || _sparseUploader.HasPendingComputeUploads)
+                _sparseUploader.Commit();
+
+            _uploadsOpen = false;
         }
 
         /// <summary>Legacy name — prefer <see cref="EndUploadFrame"/>.</summary>

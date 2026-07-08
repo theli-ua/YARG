@@ -308,6 +308,10 @@ namespace YARG.Gameplay
                 totalScore += player.BandBonusScore;
             }
 
+            // Commit BRG note instance uploads once after every tracker wrote this frame.
+            // Must not depend on HighwayCameraRendering.LateUpdate (can miss → SparseUploader stuck full).
+            _trackViewManager?.FlushHighwayInstanceUploads();
+
             if (GlobalVariables.VerboseReplays)
             {
                 _frameTimes.Add(_songRunner.InputTime);

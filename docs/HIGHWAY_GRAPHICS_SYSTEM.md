@@ -17,10 +17,12 @@ GameManager.Update
                     └── for each active note × assignments:
                           UploadInstance(O2W, W2O, baseColor, emission, random*)
 
-HighwayCameraRendering.LateUpdate
-    └── EndUploadFrame()
-            ├── SparseUploader.Commit()   — once per frame after all trackers
-            └── framesUnused accounting for GC
+GameManager.Update (after all TrackPlayers)
+    └── TrackViewManager.FlushHighwayInstanceUploads()
+            └── EndUploadFrame()
+                    ├── SparseUploader.Commit()   — once per frame after all trackers
+                    └── framesUnused accounting for GC
+    (HCR.LateUpdate also calls EndUploadFrame as backup)
 
 BRG Culling (render thread)
     └── OnPerformCullingCallback()
@@ -46,11 +48,12 @@ Offset 64+:    HeapAllocator-managed regions
         [worldToObject: 48*N]   // packed float3x4 (affine inverse)
         [baseColor:     16*N]   // float4 _BaseColor
         [emission:      16*N]   // float4 _EmissionColor + _Emission (same region)
-        [randomFloat:   16*N]   // float4, x = _RandomFloat
-        [randomVector:  16*N]   // float4, xy = _RandomVector
+        [randomFloat:    4*N]   // float _RandomFloat (stride must match shader)
+        [randomVector:  16*N]   // float4 _RandomVector (xy used)
+        // region starts 16-aligned; heap block sized ~160*N
 ```
 
-**Initial buffer:** 8 MB (grows up to 64 MB on demand). Growth copies existing contents, remaps batch buffer handles, recreates SparseUploader.
+**Initial buffer:** 8 MB (grows up to 64 MB on demand). Growth commits pending uploads, copies existing contents, remaps batch buffer handles, recreates SparseUploader.
 
 **ElementBatch** (class — mutations persist in registry):
 - BRG IDs, capacity, activeCount, SoA byte offsets
@@ -86,6 +89,7 @@ EGS-style scatter into destination GraphicsBuffer.
 - **Compute path (default):** ring of `NumFramesInFlight+1` intermediate buffers, LockBufferForWrite, ops from start / data from end, Dispatch
 - **Direct fallback:** stage + single `SetData` over dirty range
 - **Guards:** ops+data must not meet in the middle (drop + error log if full)
+- **CommitCompute:** always clears lock + `m_OperationOffset`/`m_DataOffset` (next frame re-locks clean)
 - **repeatCount:** one Operation with `count=N` (EGS semantics), not N ops
 
 ### NoteTracker
