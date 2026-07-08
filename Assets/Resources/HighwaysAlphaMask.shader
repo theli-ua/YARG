@@ -18,7 +18,13 @@ Shader "HighwaysAlphaMask"
             #pragma target 4.5
             #pragma vertex vert
             #pragma fragment frag
+            // Required so override-material draws through BRG/Hybrid Batch Group load
+            // per-instance unity_ObjectToWorld from the batch GPU buffer.
             #pragma multi_compile _ DOTS_INSTANCING_ON
+
+            // Core.hlsl → Input.hlsl already includes UniversalDOTSInstancing.hlsl, which
+            // rebinds unity_ObjectToWorld / UNITY_MATRIX_M to BRG batch metadata when
+            // DOTS_INSTANCING_ON is active. No extra DOTS include needed here.
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Assets/Art/Shaders/highways.hlsl"
 
@@ -27,6 +33,7 @@ Shader "HighwaysAlphaMask"
             struct Attributes
             {
                 float4 positionOS : POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct Varyings
@@ -38,6 +45,12 @@ Shader "HighwaysAlphaMask"
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
+
+                // Critical for BRG: without this, TransformObjectToWorld reads the wrong
+                // (or default) instance and alpha is written at incorrect screen positions.
+                // MeshRenderers ignore instance setup — still safe.
+                UNITY_SETUP_INSTANCE_ID(IN);
+
                 OUT.positionWS = TransformObjectToWorld(IN.positionOS.xyz);
                 OUT.positionCS = YargTransformWorldToHClip(OUT.positionWS);
                 return OUT;
@@ -48,9 +61,8 @@ Shader "HighwaysAlphaMask"
                 int index = WorldPosToIndex(IN.positionWS);
                 float fadeStartPos = _YargFadeParams[index * 2];
                 float fadeEndPos   = _YargFadeParams[index * 2 + 1];
-                // Euclidean distance from camera to this fragment
+                // Distance along highway Z from camera (matches prior fade convention)
                 float3 camPos = YargWorldSpaceCameraPos(IN.positionWS);
-                // float dist = distance(camPos, IN.positionWS);
                 float dist = IN.positionWS.z - camPos.z;
                 float alpha = 0.0;
 

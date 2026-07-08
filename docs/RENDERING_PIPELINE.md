@@ -193,6 +193,17 @@ Event: `AfterRendering`.
 
 Result: highway geometry areas get fade value, empty areas stay at 1.0. Final composite uses `Blend SrcAlpha OneMinusSrcAlpha` so faded geometry blends correctly.
 
+### BRG / Hybrid Batch Group notes
+
+Instanced notes (BRG) are drawn in FadePass with the same override material. Frame Debugger will show the material as overridden, but the override only writes alpha at the correct pixels if `HighwaysAlphaMask` loads BRG per-instance transforms:
+
+- `#pragma multi_compile _ DOTS_INSTANCING_ON`
+- `UNITY_VERTEX_INPUT_INSTANCE_ID` on vertex inputs
+- `UNITY_SETUP_INSTANCE_ID(IN)` at the start of the vertex shader
+- URP `Core.hlsl` → `Input.hlsl` already pulls in `UniversalDOTSInstancing.hlsl`, which registers `unity_ObjectToWorld` / `unity_WorldToObject` as DOTS instanced `float3x4` props and rebinds `UNITY_MATRIX_M` to load them from the batch GPU buffer
+
+Without instance-ID setup, `TransformObjectToWorld` does not read the batch GPU buffer → alpha is written at wrong screen positions → notes keep full opacity past the fade while MeshRenderer highway geometry still fades correctly.
+
 ---
 
 ## Highway Composition
