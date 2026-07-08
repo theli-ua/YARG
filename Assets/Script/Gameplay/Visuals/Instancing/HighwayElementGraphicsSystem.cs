@@ -5,13 +5,11 @@ using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using UnityEngine;
 using UnityEngine.Rendering;
-using YARG.Themes;
 
 namespace YARG.Gameplay.Visuals.Instancing
 {
     /// <summary>
     /// Interface for note trackers that this system renders.
-    /// Implemented by NoteTracker in section 3.
     /// </summary>
     internal interface INoteTracker
     {
@@ -25,6 +23,9 @@ namespace YARG.Gameplay.Visuals.Instancing
     /// <summary>
     /// Manages instanced rendering of highway elements (notes, holds, etc.)
     /// using Unity's BatchRendererGroup API with SoA layout in GPU memory.
+    ///
+    /// Access pattern is dense per-frame rewrite (highway "particle" model),
+    /// with EGS-inspired GPU buffer layout + SparseUploader.
     /// </summary>
     internal class HighwayElementGraphicsSystem : IDisposable
     {
@@ -40,27 +41,51 @@ namespace YARG.Gameplay.Visuals.Instancing
         // Batch registry: BatchKey → ElementBatch
         private readonly Dictionary<BatchKey, ElementBatch> _batches = new();
 
-        // Tracker registry
+        // Tracker registry (lifecycle only — culling does not query trackers)
         private readonly List<INoteTracker> _trackers = new();
 
         // Mesh/material ID caches
         private readonly Dictionary<int, BatchMeshID> _meshIDs = new();
         private readonly Dictionary<int, BatchMaterialID> _materialIDs = new();
 
-        private const int InitialBufferSize = 2 * 1024 * 1024; // 2MB initial
-        private const int BytesPerInstance = 112; // 48 + 48 + 16
+        // 8MB default — multiplayer + multi-mesh themes need headroom beyond 2MB
+        private const int InitialBufferSize = 8 * 1024 * 1024;
+        private const int MaxBufferSize = 64 * 1024 * 1024;
+
+        // SoA strides must match shader property sizes (DOTS metadata):
+        //   O2W 48 + W2O 48 + BaseColor 16 + Emission 16 + RandomFloat 4 + RandomVector 16 = 148
+        // RandomVector uploaded as float4 (Shader Graph / SetVector); RandomFloat is float.
+        // Region starts are 16-aligned; overall alloc rounds up per instance for heap sizing.
+        private const int BytesPerInstance = 160; // 148 payload + pad for alignment headroom
+        private const int StrideO2W = 48;
+        private const int StrideW2O = 48;
+        private const int StrideFloat4 = 16;
+        private const int StrideFloat = 4;
         private const int DefaultBatchCapacity = 256;
+        /// <summary>Minimum multiplayer multiplier when sizing new batches.</summary>
+        private const int MinPlayerHeadroom = 4;
 
         private int _cullFrameCounter;
-        private bool _hasLoggedDrawCommands;
         private const int ZeroMatrixSize = 64; // float4x4 at offset 0
 
         // Frame counter for BeginUploadFrame — ensures batches reset activeCount once per frame.
         private int _uploadFrame = -1;
+        private bool _uploadsOpen;
+
+        private static readonly int ObjectToWorldID = Shader.PropertyToID("unity_ObjectToWorld");
+        private static readonly int WorldToObjectID = Shader.PropertyToID("unity_WorldToObject");
+        private static readonly int BaseColorID = Shader.PropertyToID("_BaseColor");
+        private static readonly int EmissionColorID = Shader.PropertyToID("_EmissionColor");
+        private static readonly int EmissionID = Shader.PropertyToID("_Emission");
+        private static readonly int RandomFloatID = Shader.PropertyToID("_RandomFloat");
+        private static readonly int RandomVectorID = Shader.PropertyToID("_RandomVector");
+
+        /// <summary>When true, periodic HEGS diagnostics log every 300 cull frames.</summary>
+        internal static bool DebugLogging { get; set; }
 
         private bool _disposed;
 
-        #region ElementBatch (Task 2.2)
+        #region ElementBatch
 
         /// <summary>
         /// Metadata for a single batch of highway elements sharing the same mesh/material.
@@ -78,12 +103,25 @@ namespace YARG.Gameplay.Visuals.Instancing
             public int objectToWorldOffset;
             public int worldToObjectOffset;
             public int baseColorOffset;
+            public int emissionOffset;
+            public int randomFloatOffset;
+            public int randomVectorOffset;
             public Matrix4x4 meshLocalOffset;
+            /// <summary>Theme emission addition baked into uploaded color (rgb).</summary>
+            public float emissionAddition;
+            /// <summary>Theme emission multiplier applied to uploaded emission color.</summary>
+            public float emissionMultiplier;
+            /// <summary>Frames since this batch had activeCount &gt; 0 at EndUploadFrame.</summary>
+            public int framesUnused;
+            /// <summary>Unity instance IDs used for BatchKey (for re-key after grow).</summary>
+            public int meshKey;
+            public int matKey;
+            public int sourceRendererID;
         }
 
         #endregion
 
-        #region BatchKey (Task 2.3)
+        #region BatchKey
 
         /// <summary>
         /// Unique key for grouping instances into batches.
@@ -121,21 +159,19 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         #endregion
 
-        #region Construction / Destruction (Tasks 2.4, 2.10)
+        #region Construction / Destruction
 
         /// <summary>
         /// Initializes the graphics system. Call once after construction.
         /// </summary>
         internal void OnCreate()
         {
-            // Check if API uses ConstantBuffer or RawBuffer
             bool useConstantBuffer = BatchRendererGroup.BufferTarget == BatchBufferTarget.ConstantBuffer;
             var bufferTarget = useConstantBuffer
                 ? GraphicsBuffer.Target.Constant
                 : GraphicsBuffer.Target.Raw;
             var stride = useConstantBuffer ? 16 : sizeof(int);
 
-            // Allocate GPU buffer
             _gpuBuffer = new GraphicsBuffer(bufferTarget, InitialBufferSize / stride, stride);
             _gpuBuffer.name = "HighwayElementGPUBuffer";
 
@@ -143,13 +179,11 @@ namespace YARG.Gameplay.Visuals.Instancing
             var zeroInit = new int[ZeroMatrixSize / sizeof(int)];
             _gpuBuffer.SetData(zeroInit, 0, 0, zeroInit.Length);
 
-            // Initialize heap allocator — start after 64-byte zero prefix
+            // Heap starts after 64-byte zero prefix (logical offsets add ZeroMatrixSize)
             _heapAllocator = new HeapAllocator((ulong)(InitialBufferSize - ZeroMatrixSize), 16);
 
-            // Initialize sparse uploader
-            _sparseUploader = new SparseUploader(_gpuBuffer); // default 16MB chunk (EGS default)
+            _sparseUploader = new SparseUploader(_gpuBuffer);
 
-            // Create BatchRendererGroup using BatchRendererGroupCreateInfo
             var createInfo = new BatchRendererGroupCreateInfo
             {
                 cullingCallback = OnPerformCullingCallback,
@@ -157,19 +191,12 @@ namespace YARG.Gameplay.Visuals.Instancing
             };
             _brg = new BatchRendererGroup(createInfo);
 
-            // Enable camera view type
             _brg.SetEnabledViewTypes(new[] { BatchCullingViewType.Camera });
-
-            // Set huge bounds so all highway notes are visible
             _brg.SetGlobalBounds(new Bounds(Vector3.zero, new Vector3(1048576f, 1048576f, 1048576f)));
 
-            // Get buffer handle for BRG
             _gpuBufferHandle = _gpuBuffer.bufferHandle;
         }
 
-        /// <summary>
-        /// Disposes all resources.
-        /// </summary>
         public void Dispose()
         {
             if (_disposed)
@@ -209,25 +236,31 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         #endregion
 
-        #region Batch Management (Tasks 2.5, 2.6, 2.7)
+        #region Batch Management
 
         /// <summary>
         /// Gets or creates a batch for the given mesh, material, and submesh.
-        /// Registers mesh/material with BRG if not already registered.
         /// </summary>
+        /// <param name="playerCountHint">
+        /// Number of concurrent players that may share this batch. Capacity is at least
+        /// <paramref name="capacityPerPlayer"/> × max(hint, <see cref="MinPlayerHeadroom"/>).
+        /// </param>
         internal ElementBatch GetOrCreateBatch(
             Mesh mesh,
             Material material,
             int submeshIndex,
             int sourceRendererID,
-            int capacity = -1,
-            Matrix4x4? meshLocalOffset = null)
+            int capacityPerPlayer = -1,
+            Matrix4x4? meshLocalOffset = null,
+            float emissionAddition = 0f,
+            float emissionMultiplier = 1f,
+            int playerCountHint = 1)
         {
-            // Build key from registered IDs
+            if (_disposed) return null;
+
             int meshKey = mesh.GetInstanceID();
             int matKey = material.GetInstanceID();
 
-            // Register with BRG if needed
             if (!_meshIDs.TryGetValue(meshKey, out var meshID))
             {
                 meshID = _brg.RegisterMesh(mesh);
@@ -251,51 +284,140 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (_batches.TryGetValue(key, out var existing))
                 return existing;
 
-            if (capacity < 0)
-                capacity = DefaultBatchCapacity;
+            if (capacityPerPlayer < 0)
+                capacityPerPlayer = DefaultBatchCapacity;
 
-            // Allocate GPU memory from the heap
-            var block = _heapAllocator.Allocate((ulong)(BytesPerInstance * capacity), 16);
+            int players = Mathf.Max(MinPlayerHeadroom, Mathf.Max(1, playerCountHint));
+            int capacity = capacityPerPlayer * players;
 
+            var block = AllocateHeapBlock(BytesPerInstance * capacity);
             if (block.Empty)
             {
-                Debug.LogError($"[HighwayElementGraphicsSystem] Heap allocation failed for {capacity} instances ({BytesPerInstance * capacity} bytes).");
+                Debug.LogError(
+                    $"[HighwayElementGraphicsSystem] Heap allocation failed for {capacity} instances " +
+                    $"({BytesPerInstance * capacity} bytes) after growth attempts.");
                 return null;
             }
 
-            // Compute SoA offsets within the allocation (add ZeroMatrixSize for 64-byte prefix)
-            int objectToWorldOffset = (int)block.begin + ZeroMatrixSize;
-            int worldToObjectOffset = objectToWorldOffset + 48 * capacity;
-            int baseColorOffset = worldToObjectOffset + 48 * capacity;
+            var batch = CreateBatchFromBlock(
+                key, meshID, materialID, submeshIndex, block, capacity,
+                meshLocalOffset ?? Matrix4x4.identity,
+                emissionAddition, emissionMultiplier,
+                meshKey, matKey, sourceRendererID);
 
-            // Build metadata array for BRG
-            // NOTE: _BaseColor metadata may crash on some shaders - try without if crash persists
-            var metadata = new NativeArray<MetadataValue>(3, Allocator.Temp);
-            metadata[0] = new MetadataValue
+            _batches[key] = batch;
+            return batch;
+        }
+
+        private HeapBlock AllocateHeapBlock(int sizeBytes)
+        {
+            var block = _heapAllocator.Allocate((ulong)sizeBytes, 16);
+            if (!block.Empty)
+                return block;
+
+            // Grow GPU buffer + heap and retry once (and again up to max).
+            while (block.Empty)
             {
-                NameID = Shader.PropertyToID("unity_ObjectToWorld"),
-                Value = 0x80000000u | (uint)objectToWorldOffset
-            };
-            metadata[1] = new MetadataValue
+                int currentSize = _gpuBuffer != null ? _gpuBuffer.count * 4 : InitialBufferSize;
+                int newSize = Mathf.Min(MaxBufferSize, Mathf.Max(currentSize * 2, currentSize + sizeBytes + ZeroMatrixSize));
+                if (newSize <= currentSize)
+                    break;
+
+                if (!TryGrowGpuBuffer(newSize))
+                    break;
+
+                block = _heapAllocator.Allocate((ulong)sizeBytes, 16);
+            }
+
+            return block;
+        }
+
+        private bool TryGrowGpuBuffer(int newSizeBytes)
+        {
+            if (_disposed || _gpuBuffer == null || _brg == null)
+                return false;
+
+            // Flush pending scatter ops into the old buffer before swapping destinations.
+            if (_uploadsOpen)
+                _sparseUploader?.Commit();
+
+            bool useConstantBuffer = BatchRendererGroup.BufferTarget == BatchBufferTarget.ConstantBuffer;
+            var bufferTarget = useConstantBuffer
+                ? GraphicsBuffer.Target.Constant
+                : GraphicsBuffer.Target.Raw;
+            var stride = useConstantBuffer ? 16 : sizeof(int);
+
+            int oldCount = _gpuBuffer.count;
+            int newCount = newSizeBytes / stride;
+            var newBuffer = new GraphicsBuffer(bufferTarget, newCount, stride);
+            newBuffer.name = "HighwayElementGPUBuffer";
+
+            // Copy existing contents (zeros + any committed instance data).
+            int copyInts = Mathf.Min(oldCount, newCount);
+            if (copyInts > 0)
             {
-                NameID = Shader.PropertyToID("unity_WorldToObject"),
-                Value = 0x80000000u | (uint)worldToObjectOffset
-            };
-            metadata[2] = new MetadataValue
+                var tmp = new int[copyInts];
+                _gpuBuffer.GetData(tmp);
+                newBuffer.SetData(tmp);
+            }
+
+            ulong newHeapSize = (ulong)(newSizeBytes - ZeroMatrixSize);
+            if (!_heapAllocator.Resize(newHeapSize))
             {
-                NameID = Shader.PropertyToID("_BaseColor"),
-                Value = 0x80000000u | (uint)baseColorOffset
-            };
+                newBuffer.Dispose();
+                return false;
+            }
 
+            _gpuBuffer.Dispose();
+            _gpuBuffer = newBuffer;
+            _gpuBufferHandle = _gpuBuffer.bufferHandle;
 
+            foreach (var batch in _batches.Values)
+                _brg.SetBatchBuffer(batch.batchID, _gpuBufferHandle);
 
-            // Register batch with BRG
+            // Destination changed — new uploader; further AddUploads this frame stay open.
+            _sparseUploader?.Dispose();
+            _sparseUploader = new SparseUploader(_gpuBuffer);
+
+            if (DebugLogging)
+                Debug.Log($"[HEGS] Grew GPU buffer to {newSizeBytes / 1024}KB");
+
+            return true;
+        }
+
+        private ElementBatch CreateBatchFromBlock(
+            BatchKey key,
+            BatchMeshID meshID,
+            BatchMaterialID materialID,
+            int submeshIndex,
+            HeapBlock block,
+            int capacity,
+            Matrix4x4 meshLocalOffset,
+            float emissionAddition,
+            float emissionMultiplier,
+            int meshKey,
+            int matKey,
+            int sourceRendererID)
+        {
+            ComputeSoAOffsets((int)block.begin, capacity,
+                out int objectToWorldOffset, out int worldToObjectOffset,
+                out int baseColorOffset, out int emissionOffset,
+                out int randomFloatOffset, out int randomVectorOffset);
+
+            // _Emission and _EmissionColor share the same SoA region for SG + URP mat parity.
+            var metadata = new NativeArray<MetadataValue>(7, Allocator.Temp);
+            metadata[0] = new MetadataValue { NameID = ObjectToWorldID, Value = 0x80000000u | (uint)objectToWorldOffset };
+            metadata[1] = new MetadataValue { NameID = WorldToObjectID, Value = 0x80000000u | (uint)worldToObjectOffset };
+            metadata[2] = new MetadataValue { NameID = BaseColorID, Value = 0x80000000u | (uint)baseColorOffset };
+            metadata[3] = new MetadataValue { NameID = EmissionColorID, Value = 0x80000000u | (uint)emissionOffset };
+            metadata[4] = new MetadataValue { NameID = EmissionID, Value = 0x80000000u | (uint)emissionOffset };
+            metadata[5] = new MetadataValue { NameID = RandomFloatID, Value = 0x80000000u | (uint)randomFloatOffset };
+            metadata[6] = new MetadataValue { NameID = RandomVectorID, Value = 0x80000000u | (uint)randomVectorOffset };
+
             BatchID batchID = _brg.AddBatch(metadata, _gpuBufferHandle);
-
-            // Dispose the metadata array (Temp allocator)
             metadata.Dispose();
 
-            var batch = new ElementBatch
+            return new ElementBatch
             {
                 batchID = batchID,
                 meshID = meshID,
@@ -307,16 +429,75 @@ namespace YARG.Gameplay.Visuals.Instancing
                 objectToWorldOffset = objectToWorldOffset,
                 worldToObjectOffset = worldToObjectOffset,
                 baseColorOffset = baseColorOffset,
-                meshLocalOffset = meshLocalOffset ?? Matrix4x4.identity
+                emissionOffset = emissionOffset,
+                randomFloatOffset = randomFloatOffset,
+                randomVectorOffset = randomVectorOffset,
+                meshLocalOffset = meshLocalOffset,
+                emissionAddition = emissionAddition,
+                emissionMultiplier = emissionMultiplier,
+                framesUnused = 0,
+                meshKey = meshKey,
+                matKey = matKey,
+                sourceRendererID = sourceRendererID
             };
-
-            _batches[key] = batch;
-            return batch;
         }
 
         /// <summary>
-        /// Removes a batch and releases its GPU memory.
+        /// Grow an existing batch's capacity. Safe during upload because instance data is
+        /// fully rewritten every frame — old GPU contents are not preserved.
         /// </summary>
+        internal bool EnsureCapacity(ElementBatch batch, int needed)
+        {
+            if (_disposed || batch == null)
+                return false;
+            if (needed <= batch.capacity)
+                return true;
+
+            int newCapacity = Mathf.Max(needed, batch.capacity * 2);
+            var newBlock = AllocateHeapBlock(BytesPerInstance * newCapacity);
+            if (newBlock.Empty)
+            {
+                Debug.LogError($"[HEGS] EnsureCapacity failed: need {needed}, had {batch.capacity}");
+                return false;
+            }
+
+            // Tear down old BRG batch + heap region
+            _heapAllocator.Release(batch.gpuAllocation);
+            _brg.RemoveBatch(batch.batchID);
+
+            ComputeSoAOffsets((int)newBlock.begin, newCapacity,
+                out int objectToWorldOffset, out int worldToObjectOffset,
+                out int baseColorOffset, out int emissionOffset,
+                out int randomFloatOffset, out int randomVectorOffset);
+
+            var metadata = new NativeArray<MetadataValue>(7, Allocator.Temp);
+            metadata[0] = new MetadataValue { NameID = ObjectToWorldID, Value = 0x80000000u | (uint)objectToWorldOffset };
+            metadata[1] = new MetadataValue { NameID = WorldToObjectID, Value = 0x80000000u | (uint)worldToObjectOffset };
+            metadata[2] = new MetadataValue { NameID = BaseColorID, Value = 0x80000000u | (uint)baseColorOffset };
+            metadata[3] = new MetadataValue { NameID = EmissionColorID, Value = 0x80000000u | (uint)emissionOffset };
+            metadata[4] = new MetadataValue { NameID = EmissionID, Value = 0x80000000u | (uint)emissionOffset };
+            metadata[5] = new MetadataValue { NameID = RandomFloatID, Value = 0x80000000u | (uint)randomFloatOffset };
+            metadata[6] = new MetadataValue { NameID = RandomVectorID, Value = 0x80000000u | (uint)randomVectorOffset };
+
+            batch.batchID = _brg.AddBatch(metadata, _gpuBufferHandle);
+            metadata.Dispose();
+
+            batch.gpuAllocation = newBlock;
+            batch.capacity = newCapacity;
+            batch.objectToWorldOffset = objectToWorldOffset;
+            batch.worldToObjectOffset = worldToObjectOffset;
+            batch.baseColorOffset = baseColorOffset;
+            batch.emissionOffset = emissionOffset;
+            batch.randomFloatOffset = randomFloatOffset;
+            batch.randomVectorOffset = randomVectorOffset;
+            // Preserve activeCount so concurrent appends keep writing at correct slots.
+
+            if (DebugLogging)
+                Debug.Log($"[HEGS] Grew batch capacity to {newCapacity}");
+
+            return true;
+        }
+
         internal void RemoveBatch(BatchKey key)
         {
             if (_disposed) return;
@@ -329,16 +510,17 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         /// <summary>
-        /// Removes all batches that have no active instances.
+        /// Removes batches unused for many frames. Must NOT use live activeCount alone —
+        /// BeginUploadFrame zeros all counts every frame.
         /// </summary>
-        internal void GarbageCollectEmptyBatches()
+        internal void GarbageCollectEmptyBatches(int unusedFrameThreshold = 600)
         {
             if (_disposed) return;
-            // Collect keys to remove (avoids modifying dictionary during iteration)
-            var keysToRemove = new List<BatchKey>(_batches.Count);
+
+            var keysToRemove = new List<BatchKey>();
             foreach (var kvp in _batches)
             {
-                if (kvp.Value.activeCount == 0)
+                if (kvp.Value.framesUnused >= unusedFrameThreshold)
                     keysToRemove.Add(kvp.Key);
             }
 
@@ -348,25 +530,11 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         #endregion
 
-        #region Data Upload (Task 2.8)
-
-        /// <summary>
-        /// Flushes pending uploads to the GPU.
-        /// </summary>
-        internal JobHandle UploadDirtyData(JobHandle dependency)
-        {
-            if (_disposed) return dependency;
-            if (_sparseUploader != null)
-                _sparseUploader.Commit();
-            return dependency;
-        }
+        #region Data Upload
 
         /// <summary>
         /// Resets <see cref="ElementBatch.activeCount"/> for every batch to zero.
         /// Must be called once per frame BEFORE any tracker uploads instance data.
-        /// The first tracker to upload in a frame triggers this; subsequent trackers append.
-        /// This makes <c>activeCount</c> reflect exactly the instances written this frame,
-        /// which is what <see cref="OnPerformCullingCallback"/> uses as <c>visibleCount</c>.
         /// </summary>
         internal void BeginUploadFrame()
         {
@@ -377,6 +545,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 int frame = Time.frameCount;
                 if (_uploadFrame == frame) return;
                 _uploadFrame = frame;
+                _uploadsOpen = true;
                 foreach (var batch in _batches.Values)
                     batch.activeCount = 0;
             }
@@ -386,9 +555,47 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
         }
 
+        /// <summary>
+        /// Commits pending SparseUploader ops once per frame after all trackers uploaded.
+        /// Updates unused-frame counters for safe GC.
+        /// </summary>
+        internal void EndUploadFrame()
+        {
+            if (_disposed) return;
+
+            UnityEngine.Profiling.Profiler.BeginSample("HEGS.EndUploadFrame");
+            try
+            {
+                if (_uploadsOpen)
+                {
+                    _sparseUploader?.Commit();
+                    _uploadsOpen = false;
+                }
+
+                foreach (var batch in _batches.Values)
+                {
+                    if (batch.activeCount > 0)
+                        batch.framesUnused = 0;
+                    else
+                        batch.framesUnused++;
+                }
+            }
+            finally
+            {
+                UnityEngine.Profiling.Profiler.EndSample();
+            }
+        }
+
+        /// <summary>Legacy name — prefer <see cref="EndUploadFrame"/>.</summary>
+        internal JobHandle UploadDirtyData(JobHandle dependency)
+        {
+            EndUploadFrame();
+            return dependency;
+        }
+
         #endregion
 
-        #region Culling Callback (Task 2.9)
+        #region Culling Callback
 
         private unsafe JobHandle OnPerformCullingCallback(
             BatchRendererGroup rendererGroup,
@@ -399,102 +606,95 @@ namespace YARG.Gameplay.Visuals.Instancing
             UnityEngine.Profiling.Profiler.BeginSample("HEGS.OnPerformCulling");
             try
             {
-                // Guard against disposal during shutdown
                 if (_disposed || _brg == null)
                     return default;
 
-            // First pass: count total visible instances (sum of activeCount across batches)
-            int totalVisible = 0;
-            int activeBatchCount = 0;
-            foreach (var batch in _batches.Values)
-            {
-                if (batch.activeCount > 0)
+                int totalVisible = 0;
+                int activeBatchCount = 0;
+                foreach (var batch in _batches.Values)
                 {
-                    totalVisible += batch.activeCount;
-                    activeBatchCount++;
+                    if (batch.activeCount > 0)
+                    {
+                        totalVisible += batch.activeCount;
+                        activeBatchCount++;
+                    }
                 }
-            }
 
-            if (totalVisible == 0)
-                return default;
+                if (totalVisible == 0)
+                    return default;
 
-            // Periodic diagnostic — log every 300 frames
-            _cullFrameCounter++;
-            if (_cullFrameCounter % 300 == 0)
-            {
-                int totalCapacity = 0;
-                foreach (var b in _batches.Values) totalCapacity += b.capacity;
-                Debug.Log($"[HEGS] CULL DIAG: batches={_batches.Count}, activeBatches={activeBatchCount}, visible={totalVisible}, totalCapacity={totalCapacity}, gpuBuffer={_gpuBuffer.count * 4 / 1024}KB");
-            }
-
-            // Allocate draw command and visibility arrays (TempJob — freed by BRG after callback)
-            int drawCommandsSize = activeBatchCount * UnsafeUtility.SizeOf<BatchDrawCommand>();
-            int instancesSize = totalVisible * sizeof(int);
-            int alignment = UnsafeUtility.AlignOf<long>();
-
-            void* drawCommandsPtr = UnsafeUtility.Malloc(drawCommandsSize, alignment, Allocator.TempJob);
-            void* instancesPtr = UnsafeUtility.Malloc(instancesSize, alignment, Allocator.TempJob);
-
-            int visibleInstanceOffset = 0;
-            int drawCommandIndex = 0;
-
-            // Fill draw commands for each active batch.
-            // Visible instances are [0, 1, ..., activeCount-1] — batches are kept dense
-            // by UploadToGPU's per-frame sequential write (reset to 0 each frame).
-            foreach (var batch in _batches.Values)
-            {
-                int count = batch.activeCount;
-                if (count <= 0)
-                    continue;
-
-                // splitVisibilityMask is ushort — cap at 16 bits
-                ushort splitVisibilityMask;
-                if (count >= 16)
-                    splitVisibilityMask = 0xffff;
-                else
-                    splitVisibilityMask = (ushort)((1 << count) - 1);
-
-                var cmd = new BatchDrawCommand
+                _cullFrameCounter++;
+                if (DebugLogging && _cullFrameCounter % 300 == 0)
                 {
-                    batchID = batch.batchID,
-                    materialID = batch.materialID,
-                    meshID = batch.meshID,
-                    submeshIndex = (ushort)batch.submeshIndex,
-                    visibleCount = (uint)count,
-                    visibleOffset = (uint)visibleInstanceOffset,
-                    splitVisibilityMask = splitVisibilityMask,
-                    flags = 0,
-                    sortingPosition = 0
+                    int totalCapacity = 0;
+                    foreach (var b in _batches.Values) totalCapacity += b.capacity;
+                    Debug.Log(
+                        $"[HEGS] CULL DIAG: batches={_batches.Count}, activeBatches={activeBatchCount}, " +
+                        $"visible={totalVisible}, totalCapacity={totalCapacity}, " +
+                        $"gpuBuffer={_gpuBuffer.count * 4 / 1024}KB");
+                }
+
+                int drawCommandsSize = activeBatchCount * UnsafeUtility.SizeOf<BatchDrawCommand>();
+                int instancesSize = totalVisible * sizeof(int);
+                int alignment = UnsafeUtility.AlignOf<long>();
+
+                void* drawCommandsPtr = UnsafeUtility.Malloc(drawCommandsSize, alignment, Allocator.TempJob);
+                void* instancesPtr = UnsafeUtility.Malloc(instancesSize, alignment, Allocator.TempJob);
+
+                int visibleInstanceOffset = 0;
+                int drawCommandIndex = 0;
+
+                foreach (var batch in _batches.Values)
+                {
+                    int count = batch.activeCount;
+                    if (count <= 0)
+                        continue;
+
+                    var cmd = new BatchDrawCommand
+                    {
+                        batchID = batch.batchID,
+                        materialID = batch.materialID,
+                        meshID = batch.meshID,
+                        submeshIndex = (ushort)batch.submeshIndex,
+                        visibleCount = (uint)count,
+                        visibleOffset = (uint)visibleInstanceOffset,
+                        // Camera/shadow split mask — NOT instance count. Visible in all splits.
+                        splitVisibilityMask = 0xffff,
+                        flags = 0,
+                        sortingPosition = 0
+                    };
+
+                    UnsafeUtility.WriteArrayElement(drawCommandsPtr, drawCommandIndex, cmd);
+                    drawCommandIndex++;
+
+                    for (int i = 0; i < count; i++)
+                        UnsafeUtility.WriteArrayElement(instancesPtr, visibleInstanceOffset + i, i);
+                    visibleInstanceOffset += count;
+                }
+
+                var drawCmdOutput = (BatchCullingOutputDrawCommands*)cullingOutput.drawCommands.GetUnsafePtr();
+                drawCmdOutput->drawCommands = (BatchDrawCommand*)drawCommandsPtr;
+                drawCmdOutput->drawRanges = (BatchDrawRange*)UnsafeUtility.Malloc(
+                    UnsafeUtility.SizeOf<BatchDrawRange>(), UnsafeUtility.AlignOf<long>(), Allocator.TempJob);
+                drawCmdOutput->drawRanges[0].drawCommandsType = BatchDrawCommandType.Direct;
+                drawCmdOutput->drawRanges[0].drawCommandsBegin = 0;
+                drawCmdOutput->drawRanges[0].drawCommandsCount = (uint)drawCommandIndex;
+                // layer 0 = Default; highway camera typically sees Default. renderingLayerMask all bits.
+                drawCmdOutput->drawRanges[0].filterSettings = new BatchFilterSettings
+                {
+                    renderingLayerMask = 0xffffffff,
+                    layer = 0,
+                    allDepthSorted = false,
                 };
+                drawCmdOutput->drawCommandCount = drawCommandIndex;
+                drawCmdOutput->drawRangeCount = 1;
+                drawCmdOutput->visibleInstanceCount = visibleInstanceOffset;
+                drawCmdOutput->visibleInstances = (int*)instancesPtr;
+                drawCmdOutput->instanceSortingPositions = null;
+                drawCmdOutput->instanceSortingPositionFloatCount = 0;
+                drawCmdOutput->drawCommandPickingEntityIds = null;
 
-                UnsafeUtility.WriteArrayElement(drawCommandsPtr, drawCommandIndex, cmd);
-                drawCommandIndex++;
-
-                // Generate contiguous visible instance indices [0, 1, ..., count-1]
-                for (int i = 0; i < count; i++)
-                {
-                    UnsafeUtility.WriteArrayElement(instancesPtr, visibleInstanceOffset + i, i);
-                }
-                visibleInstanceOffset += count;
-            }
-
-            // Write draw commands to culling output (use pointer, not struct copy)
-            var drawCmdOutput = (BatchCullingOutputDrawCommands*)cullingOutput.drawCommands.GetUnsafePtr();
-            drawCmdOutput->drawCommands = (BatchDrawCommand*)drawCommandsPtr;
-            drawCmdOutput->drawRanges = (BatchDrawRange*)UnsafeUtility.Malloc(UnsafeUtility.SizeOf<BatchDrawRange>(), UnsafeUtility.AlignOf<long>(), Allocator.TempJob);
-            drawCmdOutput->drawRanges[0].drawCommandsType = BatchDrawCommandType.Direct;
-            drawCmdOutput->drawRanges[0].drawCommandsBegin = 0;
-            drawCmdOutput->drawRanges[0].drawCommandsCount = (uint)drawCommandIndex;
-            drawCmdOutput->drawRanges[0].filterSettings = new BatchFilterSettings { renderingLayerMask = 0xffffffff };
-            drawCmdOutput->drawCommandCount = drawCommandIndex;
-            drawCmdOutput->drawRangeCount = 1;
-            drawCmdOutput->visibleInstanceCount = visibleInstanceOffset;
-            drawCmdOutput->visibleInstances = (int*)instancesPtr;
-            drawCmdOutput->instanceSortingPositions = null;
-            drawCmdOutput->instanceSortingPositionFloatCount = 0;
-            drawCmdOutput->drawCommandPickingEntityIds = null;
-
-            return default;
+                return default;
             }
             finally
             {
@@ -506,9 +706,6 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         #region Mesh/Material Registration
 
-        /// <summary>
-        /// Registers a mesh with the BRG and caches the ID.
-        /// </summary>
         internal BatchMeshID RegisterMesh(Mesh mesh)
         {
             if (_disposed) return default;
@@ -521,9 +718,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             return meshID;
         }
 
-        /// <summary>
-        /// Registers a material with the BRG and caches the ID.
-        /// </summary>
         internal BatchMaterialID RegisterMaterial(Material material)
         {
             if (_disposed) return default;
@@ -540,18 +734,13 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         #region Tracker Management
 
-        /// <summary>
-        /// Registers a note tracker for rendering.
-        /// </summary>
         internal void RegisterNoteTracker(INoteTracker tracker)
         {
             if (_disposed) return;
-            _trackers.Add(tracker);
+            if (!_trackers.Contains(tracker))
+                _trackers.Add(tracker);
         }
 
-        /// <summary>
-        /// Unregisters a note tracker.
-        /// </summary>
         internal void UnregisterNoteTracker(INoteTracker tracker)
         {
             if (_disposed) return;
@@ -562,65 +751,82 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         #region Instance Upload Helpers
 
-        /// <summary>
-        /// Uploads instance data for a single element in a batch.
-        /// Writes objectToWorld, worldToObject, and baseColor to the GPU buffer.
-        /// Uses SoA layout: each property has its own contiguous array.
-        /// </summary>
-        /// <param name="batch">The batch to upload into (class reference, mutations persist).</param>
-        /// <param name="instanceIndex">The index within the batch (0-based).</param>
-        /// <param name="objectToWorld">The object-to-world matrix.</param>
-        /// <param name="baseColor">The base color (RGBA).</param>
-        /// <summary>
-        /// Uploads instance data for a single element in a batch.
-        /// Writes objectToWorld, worldToObject, and baseColor to the GPU buffer.
-        /// Uses SoA layout: each property has its own contiguous array.
-        /// The instance is written to slot <paramref name="instanceIndex"/> and
-        /// <see cref="ElementBatch.activeCount"/> is bumped to cover it (culling reads it).
-        /// </summary>
-        /// <param name="batch">The batch to upload into (class reference, mutations persist).</param>
-        /// <param name="instanceIndex">The GPU slot within the batch (0-based).</param>
-        /// <param name="objectToWorld">The object-to-world matrix.</param>
-        /// <param name="baseColor">The base color (RGBA).</param>
-        internal void UploadInstance(ElementBatch batch, int instanceIndex,
-            Matrix4x4 objectToWorld, Vector4 baseColor)
-        {
-            if (_disposed) return;
+        private static int Align16(int value) => (value + 15) & ~15;
 
-            if (batch == null)
+        /// <summary>
+        /// Compute SoA region offsets for a batch allocation starting at heap block begin
+        /// (relative to heap; ZeroMatrixSize is added so GPU offsets skip the safety zone).
+        /// </summary>
+        private static void ComputeSoAOffsets(
+            int heapBlockBegin,
+            int capacity,
+            out int objectToWorldOffset,
+            out int worldToObjectOffset,
+            out int baseColorOffset,
+            out int emissionOffset,
+            out int randomFloatOffset,
+            out int randomVectorOffset)
+        {
+            objectToWorldOffset = heapBlockBegin + ZeroMatrixSize;
+            worldToObjectOffset = objectToWorldOffset + StrideO2W * capacity;
+            baseColorOffset = worldToObjectOffset + StrideW2O * capacity;
+            emissionOffset = baseColorOffset + StrideFloat4 * capacity;
+            // Align region starts; float RandomFloat uses 4-byte instance stride.
+            randomFloatOffset = Align16(emissionOffset + StrideFloat4 * capacity);
+            randomVectorOffset = Align16(randomFloatOffset + StrideFloat * capacity);
+        }
+
+        /// <summary>
+        /// Uploads instance data for a single element in a batch (SoA).
+        /// Grows batch capacity if needed. Uses affine inverse for worldToObject.
+        /// </summary>
+        internal void UploadInstance(
+            ElementBatch batch,
+            int instanceIndex,
+            Matrix4x4 objectToWorld,
+            Vector4 baseColor,
+            Vector4 emissionColor,
+            float randomFloat,
+            Vector2 randomVector)
+        {
+            if (_disposed || batch == null)
                 return;
 
             if (instanceIndex >= batch.capacity)
             {
-                Debug.LogWarning($"[HEGS] BATCH OVERFLOW: instanceIndex={instanceIndex} >= capacity={batch.capacity}, activeCount={batch.activeCount}");
-                return;
+                if (!EnsureCapacity(batch, instanceIndex + 1))
+                {
+                    if (DebugLogging)
+                        Debug.LogWarning(
+                            $"[HEGS] BATCH OVERFLOW: instanceIndex={instanceIndex} >= capacity={batch.capacity}");
+                    return;
+                }
             }
 
-            // Validate batch offsets before use
-            if (batch.objectToWorldOffset < ZeroMatrixSize || batch.worldToObjectOffset < ZeroMatrixSize || batch.baseColorOffset < ZeroMatrixSize)
+            if (batch.objectToWorldOffset < ZeroMatrixSize)
                 return;
 
-            // SoA layout: each property has its own contiguous array
-            // objectToWorld: 48 bytes per instance (packed float3x4)
-            // worldToObject: 48 bytes per instance (packed float3x4)
-            // baseColor: 16 bytes per instance (float4)
-            int owtOffset = batch.objectToWorldOffset + instanceIndex * 48;
-            int wtoOffset = batch.worldToObjectOffset + instanceIndex * 48;
-            int colorOffset = batch.baseColorOffset + instanceIndex * 16;
+            int owtOffset = batch.objectToWorldOffset + instanceIndex * StrideO2W;
+            int wtoOffset = batch.worldToObjectOffset + instanceIndex * StrideW2O;
+            int colorOffset = batch.baseColorOffset + instanceIndex * StrideFloat4;
+            int emissionOffset = batch.emissionOffset + instanceIndex * StrideFloat4;
+            // Stride must match shader property size (float / float4).
+            int randomFloatOffset = batch.randomFloatOffset + instanceIndex * StrideFloat;
+            int randomVectorOffset = batch.randomVectorOffset + instanceIndex * StrideFloat4;
 
-            // Object-to-world matrix (48 bytes = 12 floats, packed float3x4)
             PackedMatrix packedOW = PackedMatrix.FromMatrix4x4(objectToWorld);
             _sparseUploader.AddUpload(packedOW, owtOffset);
 
-            // World-to-object matrix (48 bytes = 12 floats, packed float3x4)
-            PackedMatrix packedWO = PackedMatrix.FromInverse(objectToWorld);
+            PackedMatrix packedWO = PackedMatrix.FromAffineInverse(objectToWorld);
             _sparseUploader.AddUpload(packedWO, wtoOffset);
 
-            // Base color (16 bytes = 4 floats)
             _sparseUploader.AddUpload(baseColor, colorOffset);
+            _sparseUploader.AddUpload(emissionColor, emissionOffset);
+            _sparseUploader.AddUpload(randomFloat, randomFloatOffset);
 
-            // activeCount drives culling visibleCount. Bump to cover this slot so the
-            // culling callback (which may run after uploads) sees the correct count.
+            var rv = new Vector4(randomVector.x, randomVector.y, 0f, 0f);
+            _sparseUploader.AddUpload(rv, randomVectorOffset);
+
             if (instanceIndex >= batch.activeCount)
                 batch.activeCount = instanceIndex + 1;
         }

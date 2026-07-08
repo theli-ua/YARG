@@ -298,7 +298,8 @@ namespace YARG.Gameplay.Player
                 Debug.LogWarning($"[TrackPlayer{HighwayIndex}] NOTE: NotePool or NotePool.Prefab is null — theme extraction SKIPPED");
             }
             ThemeMeshCache.ExtractTheme(themeName, themeModels, spModels);
-            Debug.Log($"[TrackPlayer{HighwayIndex}] ThemeMeshCache: {themeModels.Count} normal + {spModels.Count} SP models for '{themeName}'");
+            if (ThemeMeshCache.DebugLogging)
+                Debug.Log($"[TrackPlayer{HighwayIndex}] ThemeMeshCache: {themeModels.Count} normal + {spModels.Count} SP models for '{themeName}'");
 
             // Initialize NoteTracker for instanced rendering
             // Resolve HighwayCameraRendering at runtime if not assigned in inspector
@@ -321,7 +322,8 @@ namespace YARG.Gameplay.Player
                     this,
                     GameManager);
                 hcr.RegisterNoteTracker(NoteTracker);
-                Debug.Log($"[TrackPlayer{HighwayIndex}] NoteTracker initialized (capacity={NotePool.ObjectCap}, theme={themePreset.Name})");
+                if (ThemeMeshCache.DebugLogging)
+                    Debug.Log($"[TrackPlayer{HighwayIndex}] NoteTracker initialized (capacity={NotePool.ObjectCap}, theme={themePreset.Name})");
             }
 
             SongLength = (float) chart.GetEndTime();

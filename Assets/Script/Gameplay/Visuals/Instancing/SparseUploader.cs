@@ -264,31 +264,37 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         private void AddUploadLocked(byte* buffer, void* src, int size, int offsetInBytes, int repeatCount)
         {
+            // Match EGS: one Operation with count=repeatCount (GPU repeats the copy).
+            // Ops grow from buffer start; data grows from buffer end. Must not meet.
             int opSize = UnsafeUtility.SizeOf<Operation>();
+            int newOpOffset = m_OperationOffset + opSize;
+            int newDataOffset = m_DataOffset + size;
 
-            for (int r = 0; r < repeatCount; r++)
+            // Collision / OOM: ops region would overlap data region.
+            if (newOpOffset + newDataOffset > m_BufferChunkSize)
             {
-                int destOffset = offsetInBytes + r * size;
-
-                // Data offset: from the end of the buffer
-                int srcOffset = m_BufferChunkSize - m_DataOffset - size;
-
-                // Copy source data into buffer at data region
-                UnsafeUtility.MemCpy(buffer + srcOffset, src, size);
-                m_DataOffset += size;
-
-                // Write Operation struct at the beginning of the buffer (zeroed first)
-                Operation op;
-                UnsafeUtility.MemSet(&op, 0, opSize);
-                op.type = 0; // OperationType.Upload
-                op.srcOffset = (uint)srcOffset;
-                op.dstOffset = (uint)destOffset;
-                op.size = (uint)size;
-                op.count = (uint)repeatCount;
-
-                UnsafeUtility.MemCpy(buffer + m_OperationOffset, &op, opSize);
-                m_OperationOffset += opSize;
+                Debug.LogError(
+                    $"[SparseUploader] Upload buffer full (ops={m_OperationOffset}, data={m_DataOffset}, " +
+                    $"need op+data={opSize + size}, chunk={m_BufferChunkSize}). Dropping upload.");
+                return;
             }
+
+            int srcOffset = m_BufferChunkSize - newDataOffset;
+
+            UnsafeUtility.MemCpy(buffer + srcOffset, src, size);
+            m_DataOffset = newDataOffset;
+
+            Operation op;
+            UnsafeUtility.MemSet(&op, 0, opSize);
+            op.type = 0; // OperationType.Upload
+            op.srcOffset = (uint)srcOffset;
+            op.dstOffset = (uint)offsetInBytes;
+            // EGS compute path: size is per-element; count repeats into dest with stride=size
+            op.size = (uint)size;
+            op.count = (uint)repeatCount;
+
+            UnsafeUtility.MemCpy(buffer + m_OperationOffset, &op, opSize);
+            m_OperationOffset = newOpOffset;
         }
 
         private void CommitCompute()

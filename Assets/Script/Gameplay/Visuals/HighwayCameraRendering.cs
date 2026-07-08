@@ -531,6 +531,10 @@ namespace YARG.Gameplay.Visuals
                 ToggleDualRenderMode();
             }
 
+            // All TrackPlayer.GameplayUpdate calls run in GameManager.Update.
+            // Commit BRG instance uploads once per frame after every tracker has written.
+            _graphicsSystem?.EndUploadFrame();
+
             if (!_allowTextureRecreation)
             {
                 return;

@@ -12,7 +12,10 @@ namespace YARG.Gameplay.Visuals.Instancing
     [StructLayout(LayoutKind.Sequential)]
     public struct NoteData
     {
-        /// <summary>SP/miss-aware color for ColoredMaterials (WITHOUT EmissionAddition — shader adds it).</summary>
+        /// <summary>
+        /// SP/miss-aware color for ColoredMaterials.
+        /// Upload path bakes theme EmissionAddition into albedo and EmissionMultiplier into emission.
+        /// </summary>
         public Vector4 color;
 
         /// <summary>Always non-SP fret color for ColoredMaterialsNoStarPower.</summary>

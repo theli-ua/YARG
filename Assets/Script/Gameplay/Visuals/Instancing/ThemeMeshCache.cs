@@ -6,7 +6,7 @@ using YARG.Themes;
 namespace YARG.Gameplay.Visuals.Instancing
 {
     /// <summary>
-    /// Describes a single render group (mesh + material + local offset).
+    /// Describes a single render group (mesh + material + local offset + emission).
     /// One RenderGroup per mesh/material entry within a material category.
     /// </summary>
     internal struct RenderGroup
@@ -16,6 +16,10 @@ namespace YARG.Gameplay.Visuals.Instancing
         public Material Material;
         public Matrix4x4 MeshLocalOffset;
         public int SourceRendererID;
+        /// <summary>From <see cref="MeshEmissionMaterialIndex.EmissionAddition"/>.</summary>
+        public float EmissionAddition;
+        /// <summary>From <see cref="MeshEmissionMaterialIndex.EmissionMultiplier"/>.</summary>
+        public float EmissionMultiplier;
     }
 
     /// <summary>
@@ -35,11 +39,11 @@ namespace YARG.Gameplay.Visuals.Instancing
     /// </summary>
     internal static class ThemeMeshCache
     {
-        // Cache: (themeName, noteType, isStarPower) → ThemeRenderData
         private static readonly Dictionary<(string, ThemeNoteType, bool), ThemeRenderData> s_cache = new();
-
-        // Track which themes have been extracted
         private static readonly HashSet<string> s_extractedThemes = new();
+
+        /// <summary>When true, extract/miss diagnostics are logged.</summary>
+        internal static bool DebugLogging { get; set; }
 
         /// <summary>
         /// Extracts mesh/material data from a ThemeNote component.
@@ -49,7 +53,8 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             if (themeNote == null)
             {
-                Debug.Log($"[ThemeMeshCache] ExtractFromTheme: themeNote is null");
+                if (DebugLogging)
+                    Debug.Log("[ThemeMeshCache] ExtractFromTheme: themeNote is null");
                 return;
             }
 
@@ -59,9 +64,14 @@ namespace YARG.Gameplay.Visuals.Instancing
             var noStarPowerGroups = ExtractGroupsFromEntries(themeNote.ColoredMaterialsNoStarPower, themeNote.transform);
             var metalGroups = ExtractGroupsFromEntries(themeNote.ColoredMetalMaterials, themeNote.transform);
 
-            Debug.Log($"[ThemeMeshCache] Extracted: theme='{themeName}', noteType={noteType}, sp={themeNote.StarPowerVariant}, colored={coloredGroups.Length}, noSP={noStarPowerGroups.Length}, metal={metalGroups.Length}");
+            if (DebugLogging)
+            {
+                Debug.Log(
+                    $"[ThemeMeshCache] Extracted: theme='{themeName}', noteType={noteType}, " +
+                    $"sp={themeNote.StarPowerVariant}, colored={coloredGroups.Length}, " +
+                    $"noSP={noStarPowerGroups.Length}, metal={metalGroups.Length}");
+            }
 
-            // Store in cache
             s_cache[(themeName, noteType, themeNote.StarPowerVariant)] = new ThemeRenderData
             {
                 Colored = coloredGroups,
@@ -70,9 +80,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             };
         }
 
-        /// <summary>
-        /// Extracts render groups from a collection of MeshEmissionMaterialIndex entries.
-        /// </summary>
         private static RenderGroup[] ExtractGroupsFromEntries(
             IEnumerable<MeshEmissionMaterialIndex> entries,
             Transform rootTransform)
@@ -84,28 +91,37 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var renderer = entry.Mesh;
                 if (renderer == null) continue;
 
-                // MeshRenderer doesn't have sharedMesh — get it from the MeshFilter on the same GameObject
                 var meshFilter = renderer.GetComponent<MeshFilter>();
                 var sharedMesh = meshFilter?.sharedMesh;
                 if (sharedMesh == null) continue;
 
                 var materials = renderer.sharedMaterials;
-                if (entry.MaterialIndex >= materials.Length) continue;
+                if (entry.MaterialIndex < 0 || entry.MaterialIndex >= materials.Length) continue;
 
                 var material = materials[entry.MaterialIndex];
                 if (material == null) continue;
 
+                // MaterialIndex is a material slot, not always a submesh index.
+                // Prefer matching submesh when present; single-submesh meshes use 0.
+                int submeshIndex = 0;
+                if (sharedMesh.subMeshCount > 1)
+                {
+                    submeshIndex = entry.MaterialIndex < sharedMesh.subMeshCount
+                        ? entry.MaterialIndex
+                        : 0;
+                }
 
-                // Compute mesh-local offset: world → root → mesh
                 var meshLocalOffset = rootTransform.worldToLocalMatrix * entry.Mesh.localToWorldMatrix;
 
                 groups.Add(new RenderGroup
                 {
                     Mesh = sharedMesh,
-                    SubmeshIndex = entry.MaterialIndex,
+                    SubmeshIndex = submeshIndex,
                     Material = material,
                     MeshLocalOffset = meshLocalOffset,
-                    SourceRendererID = renderer.GetInstanceID()
+                    SourceRendererID = renderer.GetInstanceID(),
+                    EmissionAddition = entry.EmissionAddition,
+                    EmissionMultiplier = entry.EmissionMultiplier,
                 });
             }
 
@@ -118,58 +134,47 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal static ThemeRenderData GetRenderGroups(string themeName, ThemeNoteType noteType, bool isStarPowerVisible)
         {
-            // Try exact match first
             if (s_cache.TryGetValue((themeName, noteType, isStarPowerVisible), out var data))
                 return data;
 
-            // Try same noteType, opposite SP state
             bool oppositeSp = !isStarPowerVisible;
             if (s_cache.TryGetValue((themeName, noteType, oppositeSp), out data))
                 return data;
 
-            // Try Wildcard with same SP state
             if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, isStarPowerVisible), out data))
                 return data;
 
-            // Try Wildcard with opposite SP state
             if (s_cache.TryGetValue((themeName, ThemeNoteType.Wildcard, oppositeSp), out data))
                 return data;
 
-            // DEBUG: log cache keys for diagnosing misses
-            Debug.LogWarning($"[ThemeMeshCache] MISS: theme='{themeName}', noteType={noteType}, sp={isStarPowerVisible}. Cache has {s_cache.Count} entries for theme '{themeName}'.");
+            if (DebugLogging)
+            {
+                Debug.LogWarning(
+                    $"[ThemeMeshCache] MISS: theme='{themeName}', noteType={noteType}, " +
+                    $"sp={isStarPowerVisible}. Cache has {s_cache.Count} entries for theme '{themeName}'.");
+            }
+
             return default;
         }
 
-        /// <summary>
-        /// Extracts all note types from a theme's note prefabs.
-        /// Call after theme prefabs are resolved, before first NoteTracker.Add().
-        /// The caller instantiates the prefabs and passes ThemeNote components.
-        /// </summary>
         internal static void ExtractTheme(string themeName, Dictionary<ThemeNoteType, ThemeNote> models,
             Dictionary<ThemeNoteType, ThemeNote> starPowerModels)
         {
-            // Extract normal models
             foreach (var kvp in models)
-            {
                 ExtractFromTheme(themeName, kvp.Value);
-            }
 
-            // Extract SP models
             foreach (var kvp in starPowerModels)
-            {
                 ExtractFromTheme(themeName, kvp.Value);
-            }
 
             s_extractedThemes.Add(themeName);
 
-            var themeKeys = s_cache.Keys.Where(k => k.Item1 == themeName).ToArray();
-            Debug.Log($"[ThemeMeshCache] ExtractTheme: theme='{themeName}', entries={themeKeys.Length}");
+            if (DebugLogging)
+            {
+                var themeKeys = s_cache.Keys.Where(k => k.Item1 == themeName).ToArray();
+                Debug.Log($"[ThemeMeshCache] ExtractTheme: theme='{themeName}', entries={themeKeys.Length}");
+            }
         }
 
-        /// <summary>
-        /// Clears cache entries for a specific theme.
-        /// Call when theme changes to reclaim GPU memory.
-        /// </summary>
         internal static void ClearTheme(string themeName)
         {
             var keysToRemove = new List<(string, ThemeNoteType, bool)>();
@@ -185,9 +190,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             s_extractedThemes.Remove(themeName);
         }
 
-        /// <summary>
-        /// Clears the entire cache.
-        /// </summary>
         internal static void ClearAll()
         {
             s_cache.Clear();

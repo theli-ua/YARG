@@ -1,256 +1,197 @@
 # Highway Graphics System (Instanced Note Rendering)
 
-This document describes the instanced rendering system for highway notes in YARG. It replaces the per-note GameObject/MeshRenderer approach with Unity's `BatchRendererGroup` (BRG) API and DOTS-style GPU instancing.
+Instanced highway note heads via Unity `BatchRendererGroup` (BRG) + DOTS instancing.
+**Mental model:** highway particle/instancer with EGS-inspired GPU buffer layout — not a mini Entities Graphics clone.
+
+Replaces per-note GameObject/MeshRenderer note heads. Sustains and beatlines remain GameObjects (deferred).
 
 ## Architecture Overview
 
 ```
-TrackPlayer.GameplayUpdate()
-    ├── NoteTracker.UpdatePositions()        — (no-op; Z computed in UploadToGPU)
-    ├── NoteTracker.RemoveExpired()          — backward scan, swap-remove notes past strike line
-    ├── NoteTracker.UpdateBatchAssignments() — (no-op placeholder; SP mesh switching deferred)
-    └── NoteTracker.UploadToGPU(trackLocalToWorld)
-            ├── BeginUploadFrame()           — reset ALL batches' activeCount=0 (once/frame)
-            ├── for each active note:
-            │   └── HighwayElementGraphicsSystem.UploadInstance()
-            │           ├── SparseUploader.AddUpload(objectToWorld)    — 48 bytes
-            │           ├── SparseUploader.AddUpload(worldToObject)    — 48 bytes
-            │           ├── SparseUploader.AddUpload(baseColor)        — 16 bytes
-            │           └── batch.activeCount = instanceIndex + 1      — drives culling visibleCount
-            └── HighwayElementGraphicsSystem.UploadDirtyData()
-                    └── SparseUploader.Commit()
-                            ├── Compute shader path (default)
-                            │   ├── LockBufferForWrite → write ops+data → UnlockBufferAfterWrite → Dispatch
-                            └── Direct path (fallback)
-                                └── scatter into NativeArray → single GraphicsBuffer.SetData
+GameManager.Update
+    └── foreach TrackPlayer.GameplayUpdate()
+            ├── NoteTracker.RemoveExpired()
+            ├── NoteTracker.UpdateStarPowerColors() / pulse (when needed)
+            └── NoteTracker.UploadToGPU(trackLocalToWorld)
+                    ├── BeginUploadFrame()     — reset ALL batches' activeCount=0 (once/frame)
+                    └── for each active note × assignments:
+                          UploadInstance(O2W, W2O, baseColor, emission, random*)
 
-BRG Culling (render thread, each frame)
+HighwayCameraRendering.LateUpdate
+    └── EndUploadFrame()
+            ├── SparseUploader.Commit()   — once per frame after all trackers
+            └── framesUnused accounting for GC
+
+BRG Culling (render thread)
     └── OnPerformCullingCallback()
-            └── iterate _batches.Values directly (NOT through trackers):
-                └── for each batch with activeCount > 0:
-                    └── BatchDrawCommand { visibleCount = activeCount }
-                    └── visibleInstances = [0, 1, ..., activeCount-1]  (inline, no managed alloc)
+            └── for each batch with activeCount > 0:
+                  BatchDrawCommand { visibleCount = activeCount, splitVisibilityMask = 0xffff }
+                  visibleInstances = [0 .. activeCount-1]
 ```
 
 ## Components
 
 ### HighwayElementGraphicsSystem
 
-Central manager for instanced highway rendering. One instance per highway camera, shared by all players on that camera.
+One instance per highway camera, shared by all players on that camera.
 
-**Responsibilities:**
-- Owns the `BatchRendererGroup` and its culling callback
-- Owns the shared GPU `GraphicsBuffer` (all instance data lives here)
-- Manages `HeapAllocator` for batch memory within the GPU buffer
-- Manages `SparseUploader` for incremental GPU updates
-- Registry of `ElementBatch` instances (mesh+material groups)
-- Registry of `INoteTracker` instances (one per TrackPlayer)
-- `BeginUploadFrame()` — resets all batches' `activeCount` to 0 once per frame
+**Owns:** `BatchRendererGroup`, shared `GraphicsBuffer`, `HeapAllocator`, `SparseUploader`, batch registry.
 
 **GPU Buffer Layout:**
 ```
-Offset 0:      64 bytes of zeros (BRG safety zone — unset metadata reads from addr 0)
+Offset 0:      64 bytes of zeros (BRG safety — unset metadata reads addr 0)
 Offset 64+:    HeapAllocator-managed regions
-    Each batch region:
-        [objectToWorld: 48*N] [worldToObject: 48*N] [baseColor: 16*N]
-        Total: 112 bytes per instance, N = batch capacity
+    Each batch (SoA, 160 bytes/instance):
+        [objectToWorld: 48*N]   // packed float3x4
+        [worldToObject: 48*N]   // packed float3x4 (affine inverse)
+        [baseColor:     16*N]   // float4 _BaseColor
+        [emission:      16*N]   // float4 _EmissionColor + _Emission (same region)
+        [randomFloat:   16*N]   // float4, x = _RandomFloat
+        [randomVector:  16*N]   // float4, xy = _RandomVector
 ```
 
-**ElementBatch** — groups instances sharing the same mesh, material, and submesh. Class (not struct) so mutations via `UploadInstance` persist in the registry. Each batch owns a contiguous region in the GPU buffer with Structure-of-Arrays (SoA) layout:
-- `objectToWorldOffset` — byte offset to packed float3x4 array (48 bytes/instance)
-- `worldToObjectOffset` — byte offset to packed float3x4 array (48 bytes/instance)
-- `baseColorOffset` — byte offset to float4 array (16 bytes/instance)
-- `activeCount` — instances written THIS FRAME (drives culling `visibleCount`). Owned exclusively by per-frame uploads — see invariants below.
-- `meshLocalOffset` — per-mesh local transform (captured at theme extraction)
+**Initial buffer:** 8 MB (grows up to 64 MB on demand). Growth copies existing contents, remaps batch buffer handles, recreates SparseUploader.
 
-**BatchKey** — unique identifier for a batch: `(meshID, materialID, submeshIndex, sourceRendererID)`.
+**ElementBatch** (class — mutations persist in registry):
+- BRG IDs, capacity, activeCount, SoA byte offsets
+- `meshLocalOffset`, `emissionAddition`, `emissionMultiplier`
+- `framesUnused` — for GC (not live activeCount)
+
+**BatchKey:** `(meshInstanceID, materialInstanceID, submeshIndex, sourceRendererID)`
+
+**Capacity:** new batches size to `capacityPerPlayer × max(playerCount, 4)`. Overflow grows via `EnsureCapacity` (re-AddBatch; dense rewrite means no need to preserve GPU slots).
 
 #### Critical Invariants
 
-**1. `activeCount` ownership:**
-`batch.activeCount` is owned EXCLUSIVELY by per-frame upload logic. The only permitted writers are:
-- `BeginUploadFrame()` — resets ALL batches' `activeCount` to 0 (once per frame, idempotent via `Time.frameCount`)
-- `UploadInstance()` — bumps to `max(activeCount, instanceIndex + 1)`
+**1. `activeCount` ownership**
+Only writers:
+- `BeginUploadFrame()` — reset all to 0 once/frame (`Time.frameCount`)
+- `UploadInstance()` — bump to cover written slot
 
-`NoteTracker.Add()` and `Remove()` MUST NOT touch `activeCount`. If they did, the culling callback's `visibleCount` would disagree with the actual GPU data written that frame, rendering stale slots → flicker.
+`Add()` / `Remove()` / `RemoveExpired()` MUST NOT touch `activeCount`.
 
-**2. Shared-batch append semantics:**
-Batches are SHARED across trackers (same theme → same `BatchKey` → same `ElementBatch`). Multiple trackers writing to the same batch in the same frame MUST append, not overwrite. `UploadToGPU` uses `batch.activeCount` as the instance write slot:
-- Tracker 0: `BeginUploadFrame` resets `activeCount=0`. Writes notes to slots 0..N-1. `activeCount=N`.
-- Tracker 1: `BeginUploadFrame` is a no-op (same frame). Writes notes to slots N..N+M-1 (appends). `activeCount=N+M`.
+**2. Shared-batch append**
+Batches shared across trackers (same theme → same key). Write slot = `batch.activeCount` so trackers append, never overwrite.
 
-Using a per-tracker counter that resets to 0 would cause tracker 1 to overwrite tracker 0's GPU data → one highway goes empty, the other populated, oscillating frame-to-frame = flicker.
+**3. Single commit/frame**
+Trackers only `AddUpload`. `EndUploadFrame()` (HCR `LateUpdate`) commits once.
+
+**4. GC never uses live `activeCount` alone**
+`BeginUploadFrame` zeros counts. GC uses `framesUnused` after `EndUploadFrame`.
 
 ### SparseUploader
 
-Uploads scattered data into the GPU GraphicsBuffer. Two paths:
+EGS-style scatter into destination GraphicsBuffer.
 
-#### Compute Shader Path (default)
-
-Follows the Unity.Entities.Graphics (EGS) architecture:
-
-1. **`LockBufferForWrite<byte>(0, chunkSize)`** — maps persistent intermediate buffer into CPU address space
-2. **Write operations** at buffer start (grow forward), **write data** at buffer end (grow backward)
-3. **`UnlockBufferAfterWrite<byte>(chunkSize)`** — flushes CPU writes, makes data visible to GPU
-4. **`ComputeShader.Dispatch()`** — each thread group (64 threads) processes one upload operation
-
-The compute shader (`Assets/Resources/SparseUploader.compute`) reads Operation structs + data from the intermediate buffer and scatters writes to the destination buffer. Supports operation types: Upload, Matrix_4x4, Matrix_Inverse_4x4, Matrix_3x4, Matrix_Inverse_3x4, StridedUpload.
-
-**Buffer layout (intermediate, 16 MB chunk):**
-```
-[Op0][Op1][Op2]...[padding]...[DataN][DataN-1]...
- ↑ ops grow forward        ↑ data grows backward
-```
-
-A ring of `NumFramesInFlight + 1` intermediate buffers prevents CPU overwriting GPU-read buffers.
-
-#### Direct Path (fallback)
-
-Used when compute shader is unavailable (e.g., platform doesn't support it):
-
-1. `AddUpload` — eagerly copies data into a growing CPU staging buffer, tracks dirty range `[minOffset, maxOffset)`
-2. `Commit` — scatters staged data into a single `NativeArray<int>` covering the dirty range, calls `GraphicsBuffer.SetData` once. Resets staging size to 0 (prevents unbounded growth).
-
-Reduces ~600 per-note SetData calls to 1 call per frame.
+- **Compute path (default):** ring of `NumFramesInFlight+1` intermediate buffers, LockBufferForWrite, ops from start / data from end, Dispatch
+- **Direct fallback:** stage + single `SetData` over dirty range
+- **Guards:** ops+data must not meet in the middle (drop + error log if full)
+- **repeatCount:** one Operation with `count=N` (EGS semantics), not N ops
 
 ### NoteTracker
 
-Per-TrackPlayer manager for active notes. Flat arrays, no per-note GameObjects.
+Per-TrackPlayer CPU state. Flat arrays, swap-remove, chart-note reverse lookup.
 
-**Data structures:**
-- `NativeArray<NoteData> _notes` — per-note color/flag data (68 bytes each)
-- `NativeArray<NoteSpawnData> _spawnData` — per-note spawn-time data (28 bytes each)
-- `NoteBatchAssignment[][] _batchAssignments` — note index → batch assignments (3 per note: Colored/NoStarPower/Metal)
-- `object[] _noteObjects` — chart note references for reverse lookup
-- `Dictionary<object, int> _noteToIndex` — chart note → flat index for hit/miss
-- `GameManager _gameManager` — cached at construction (avoids `FindAnyObjectByType` per frame)
+**Per frame (GameplayUpdate):**
+1. `RemoveExpired` — Z &lt; -4, backward scan, no alloc
+2. SP color / drums activator pulse when needed
+3. `UploadToGPU` — Z from visual time, world = trackL2W × T(baseX,0,z)×S(scale) × meshLocal
 
-**NoteData** (68 bytes, blittable):
-- `Vector4 color` — SP/miss-aware color for ColoredMaterials
-- `Vector4 colorNoStarPower` — always non-SP fret color
-- `Vector4 metalColor` — color for ColoredMetalMaterials
-- `int highwayIndex` — from BasePlayer.HighwayIndex
-- `float randomFloat` — random value [-1, 1]
-- `Vector2 randomVector` — random 2D vector for theme variation
-- `uint packedFlags` — bitfield: noteType (8 bits), isStarPower, isSustain, isOpenNote
+**Color / emission parity (matches old NoteGroup):**
+- Colored / NoSP: `baseColor = color + EmissionAddition`, `emission = baseColor * EmissionMultiplier`
+- Metal: `baseColor = emission = metalColor`
+- `_RandomFloat` / `_RandomVector` uploaded per instance from `NoteData`
 
-**NoteSpawnData** (28 bytes, blittable):
-- `float noteHitTime` — chart note's hit time (for Z position)
-- `float baseX` — pre-computed X from GetElementX with lefty-flip
-- `Vector3 scale` — per-instrument scale (replaces `noteHeight` float). Guitar/ProKeys: `S(1, noteHeight, 1)`, FiveLaneKeys: `S(5/6, noteHeight*5/6, 1)`, Drums: `S(NoteScaleFactor, noteHeight*NoteScaleFactor, NoteScaleFactor)`
-- `ThemeNoteType noteType` — for render group lookup
-- `bool isStarPowerVisible` — captured at spawn
-- `byte colorIndex` — fret/pad/key index for dynamic color lookups (SP activation)
-- `bool isStarPowerActivator` — drums SP-activator flag for pulse effect
-
-**Per-frame update cycle (in `TrackPlayer.GameplayUpdate`):**
-1. `UpdatePositions()` — no-op (Z is computed in `UploadToGPU` where `trackLocalToWorld` is available)
-2. `RemoveExpired()` — backward iteration, swap-remove notes with `z < -4`. No managed allocations (no `List<int>`).
-3. `UpdateBatchAssignments()` — no-op placeholder (SP mesh variant switching is deferred)
-4. **SP activation color update** — if `Engine.BaseStats.IsStarPowerActive` changed since last frame, call `NoteTracker.UpdateStarPowerColors()` to recompute `color` and `metalColor` for in-flight SP-visible notes
-5. **Drums SP-activator pulse** — `TrackPlayer.UpdateStarPowerActivatorPulse()` (virtual, no-op default). `DrumsPlayer` overrides to pulse SP-activator note colors based on `StrongBeat.CurrentPercentage`
-4. `UploadToGPU(trackLocalToWorld)` — calls `BeginUploadFrame`, iterates active notes, computes `worldMatrix = trackLocalToWorld × T(baseX,0,z) × S(spawn.scale) × batch.meshLocalOffset`, writes to `batch.activeCount` slot (shared-batch append), flushes via `UploadDirtyData`
-
-**Hit/miss lifecycle:**
-- On hit (non-sustain) or miss: `NoteTracker.TryRemoveByNote(chartNote)` — swap-removes from CPU arrays. `batch.activeCount` is NOT decremented (rebuilt next frame by `UploadToGPU`).
-- Sustain note heads are removed on hit; the `SustainLine` GameObject continues independently.
-
-### PackedMatrix
-
-Column-major 4×4 matrix packed into 12 floats (48 bytes). The w-row (0, 0, 0, 1) is dropped because DOTS instancing shaders expect a packed float3x4 and implicitly use (0, 0, 0, 1).
-
-- `FromMatrix4x4(Matrix4x4)` — extracts 3 components per column, drops w
-- `FromInverse(Matrix4x4)` — computes full inverse, then packs
+**Hit/miss:** immediate `TryRemoveByNote` — intentional; no sliding miss-colored head on BRG path.
 
 ### ThemeMeshCache
 
-Static cache keyed by `(ThemeName, ThemeNoteType, StarPowerVariant)`. Extracted from theme prefabs at song load.
+Load-time extract from theme prefabs (caller instantiates once, destroys after).
 
-**RenderGroup** — `(Mesh, SubmeshIndex, Material, MeshLocalOffset, SourceRendererID)`. Three RenderGroup arrays per note type (Colored/NoStarPower/Metal), each with its own material.
+`RenderGroup`: mesh, submesh, material, meshLocalOffset, sourceRendererID, emission add/mul.
 
-**Extraction** (`ExtractFromTheme`):
-1. Instantiate theme prefab once
-2. For each ThemeNote child: extract `sharedMesh` + `sharedMaterials[materialIndex]` for all three material arrays
-3. Capture `meshLocalOffset = modelRootTransform.worldToLocalMatrix * childMesh.transform.localToWorldMatrix`
-4. Store in cache, destroy instantiated GameObject
-5. Materials are used directly (no cloning) — instancing already enabled on assets
+**Submesh:** material index ≠ always submesh. Single-submesh → 0; multi → clamp material index to submesh count.
 
-**Lookup** (`GetRenderGroups`): returns render groups for `(theme, noteType, isStarPowerVisible)`. Falls back to non-SP variant if SP variant absent, then to Wildcard type if specific type absent.
+**Materials:** `sharedMaterials` (no per-note clone). Instancing enabled on assets.
 
-### HeapAllocator
+### PackedMatrix
 
-Ported from Unity.Entities.Graphics (`com.unity.entities.graphics`). Manages contiguous memory regions within the GPU buffer. Supports allocation, release, and coalescing of adjacent free blocks.
+48-byte float3x4. `FromAffineInverse` for TRS notes (no full 4x4 inverse each instance).
 
 ## Frame Timeline
 
 ```
-Main Thread (Update phase):
-    TrackPlayer.GameplayUpdate()
-        NoteTracker.UpdatePositions()         (no-op)
-        NoteTracker.RemoveExpired()           (backward scan, swap-remove, no alloc)
-        NoteTracker.UpdateBatchAssignments()  (no-op)
-        NoteTracker.UploadToGPU()
-            BeginUploadFrame()                (reset activeCount=0, once/frame)
-            UploadInstance() × 3 per note × 3 batches
-                SparseUploader.AddUpload()    (queue packed matrix + color)
-            SparseUploader.Commit()
-                LockBufferForWrite → write → UnlockBufferAfterWrite → Dispatch
+Main Thread Update:
+    TrackPlayers → NoteTracker.UploadToGPU (queue scatter ops only)
 
-GPU (asynchronous):
-    Compute shader executes (scattered writes to destination buffer)
+Main Thread LateUpdate (HighwayCameraRendering):
+    EndUploadFrame → SparseUploader.Commit → compute dispatch
 
-Render Thread (SRP culling):
-    BRG OnPerformCullingCallback()
-        Iterate _batches.Values directly (no tracker query)
-        Generate BatchDrawCommand[] + visibleInstances[] via UnsafeUtility.Malloc(TempJob)
-    BRG issues draw calls (one per batch)
-
-GPU (render):
-    Draw instanced notes (one draw call per batch, N instances)
+Render Thread:
+    BRG OnPerformCulling → draw commands
+    Forward: Hybrid Batch Group note draws into highway RT
+    FadePass: same batches + HighwaysAlphaMask override (DOTS instance ID required)
+    HighwayComposite: SrcAlpha blend to backbuffer
 ```
 
-## GPU Memory
+## Fade Pass + BRG
 
-- **Single GraphicsBuffer** — all instance data for all notes across all players
-- **Initial size:** 2 MB (~18,000 instances at 112 bytes each; ~36 batches at 500 capacity each)
-- **HeapAllocator** manages batch regions within the buffer
-- **SparseUploader intermediate buffer:** 16 MB chunk (compute shader path), ring of `NumFramesInFlight + 1` buffers
+FadePass override material **does** apply to Hybrid Batch Group in Frame Debugger, but only writes correct pixels if `HighwaysAlphaMask`:
+- `#pragma multi_compile _ DOTS_INSTANCING_ON`
+- `UNITY_VERTEX_INPUT_INSTANCE_ID` + `UNITY_SETUP_INSTANCE_ID` in vert
 
-## Performance Characteristics
+Without instance setup, alpha lands at wrong screen positions → notes stay full opacity past fade.
 
-| Metric | GameObject path | BRG instanced path |
-|--------|----------------|--------------------|
-| Draw calls | 1 per note | 1 per batch (~3-30) |
-| CreateSharedRendererScene | Per-note per frame | Zero (no GameObjects) |
-| MonoBehaviour invokes | Per-note LateUpdate | Zero (no MonoBehaviours) |
-| GPU upload | Automatic (Unity) | SparseUploader (1 compute dispatch or 1 SetData) |
-| CPU allocations | High (per-note) | Low (NativeArrays, no per-frame managed alloc) |
+See `docs/RENDERING_PIPELINE.md` Fade Pass section.
+
+## Performance
+
+| Metric | GameObject path | BRG path |
+|--------|-----------------|----------|
+| Draw calls | 1 per note mesh | 1 per batch |
+| CreateSharedRendererScene | Per-note churn | Zero for note heads |
+| MonoBehaviour LateUpdate | Per note | Zero for note heads |
+| GPU upload | Unity automatic | Dense rewrite via SparseUploader (1 commit/frame) |
+
+**Known cost:** 3 material categories × same transforms (Colored / NoSP / Metal). Acceptable; optional later: share O2W/W2O SoA across category batches.
+
+**Not Burst-parallel yet.** Main-thread fill is fine for hundreds of visible notes.
 
 ## Shader Requirements
 
-Note shaders must use `_BaseColor` (not `_Color`) as the DOTS instanced property name. Shader Graph assets have `m_OverrideReferenceName: "_BaseColor"` set on the color property block. All note theme materials have `m_EnableInstancingVariants: 1` enabled.
-
-The shader receives per-instance:
-- `unity_ObjectToWorld` — packed float3x4 (48 bytes)
-- `unity_WorldToObject` — packed float3x4 (48 bytes)
-- `_BaseColor` — float4 (16 bytes)
-
-Emission properties are constant (set on the material), not per-instance.
+Note shaders:
+- `_BaseColor` DOTS instanced (Shader Graph override reference)
+- Prefer `_Emission` / `_EmissionColor` readable as DOTS props (same buffer region)
+- `_RandomFloat`, `_RandomVector` if theme uses them
+- `m_EnableInstancingVariants: 1`
+- Highway clip via `highways.hlsl` / Yarg transforms (multi-highway)
 
 ## Thread Safety
 
-- `AddUpload` runs on the main thread only (no Burst job parallelism)
-- `OnPerformCullingCallback` runs on the SRP render thread — NO managed allocations (`UnsafeUtility.Malloc(Allocator.TempJob)` only)
-- GPU buffer writes are ordered by the driver: compute dispatch completes before render pass reads
+- `AddUpload` / `UploadInstance` — main thread only
+- `OnPerformCulling` — render thread, no managed alloc (`UnsafeUtility.Malloc(TempJob)`)
+- Commit before render via LateUpdate ordering
 
 ## Known Limitations
 
-1. **No Burst job parallelism** — all AddUpload calls are main-thread. EGS uses ThreadedSparseUploader for job-parallel uploads.
-2. **No per-instance emission** — emission is material-level constant. SP color updates and SP-activator pulse work via `NoteData.color` mutation (Tasks 10.1/10.2 implemented).
-3. **Single GraphicsBuffer** — no dynamic growth mechanism. 2 MB initial size covers typical scenarios (~36 batches). If exhausted, `HeapAllocator.Allocate` returns empty block.
-4. **No frustum culling** — all notes within the highway bounds are rendered (huge global bounds prevent BRG from culling anything).
-5. **Sustain lines still use GameObjects** — only note heads are instanced. Sustain lines remain as GameObject-based `SustainLine` components (deferred to future change).
-6. **Beatlines still use GameObjects** — beatline instancing is deferred. Beatlines remain as GameObject-based `BeatlineElement` components. The `HighwayElementGraphicsSystem` architecture supports adding beatlines without changes.
-7. **Per-instrument scale implemented** (Task 10.3). `NoteSpawnData.scale` (Vector3) replaces `noteHeight` (float). Per-instrument `CreateNoteSpawnData` computes correct scale: Guitar/ProKeys use `S(1, noteHeight, 1)`, FiveLaneKeys uses `S(5/6, noteHeight*5/6, 1)` when not using open lane, Drums uses `S(NoteScaleFactor, noteHeight*NoteScaleFactor, NoteScaleFactor)` for non-kick/non-wildcard pads.
-8. **SP mesh variant switching deferred** (Task 10.4). `UpdateBatchAssignments` is a no-op. SP notes use the mesh captured at spawn. SP *color* updates (Task 10.1) provide the primary visual feedback; SP *mesh* switching (different geometry) is secondary and deferred.
-9. **SP-activator pulse implemented** (Task 10.2). Drums SP-activator notes pulse their color each frame based on `StrongBeat.CurrentPercentage` via `NoteTracker.PulseStarPowerActivators()`.
+1. Sustain lines / beatlines still GameObjects
+2. SP **mesh** variant switching deferred (`UpdateBatchAssignments` no-op); SP **color** works
+3. Hit/miss removes head immediately (no lingering miss mesh on BRG path)
+4. Dense SparseUploader use (full rewrite) — not sparse dirty-bits; fine at current N
+5. No frustum cull (huge global bounds)
+6. Three category batches still triple transform bandwidth
+7. Debug logs gated: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`
+
+## Key Files
+
+| File | Role |
+|------|------|
+| `HighwayElementGraphicsSystem.cs` | BRG, buffer, batches, culling, upload API |
+| `NoteTracker.cs` | CPU note lifecycle + per-frame upload |
+| `ThemeMeshCache.cs` | Theme mesh/mat/emission extract |
+| `SparseUploader.cs` + `.compute` | Scatter GPU writes |
+| `PackedMatrix.cs` | float3x4 + affine inverse |
+| `NoteData.cs` | Blittable note + spawn structs |
+| `HighwaysAlphaMask.shader` | Fade A-channel (DOTS-safe) |
+| `TrackPlayer.cs` | Spawn / GameplayUpdate integration |
+| `HighwayCameraRendering.cs` | Owns HEGS; `EndUploadFrame` in LateUpdate |

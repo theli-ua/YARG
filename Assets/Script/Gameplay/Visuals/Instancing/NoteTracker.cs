@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
@@ -43,9 +42,10 @@ namespace YARG.Gameplay.Visuals.Instancing
         internal struct NoteBatchAssignment
         {
             public HighwayElementGraphicsSystem.ElementBatch Batch;
-            public int LocalIndex;
             /// <summary>Which color field to use from NoteData.</summary>
             public NoteDataField ColorField;
+            /// <summary>True for metal category (no emission addition bake).</summary>
+            public bool IsMetal;
         }
 
         // Per-note batch assignments: flat index → array of all batch assignments (all render groups)
@@ -104,10 +104,12 @@ namespace YARG.Gameplay.Visuals.Instancing
             // Look up render groups from ThemeMeshCache
             var renderData = ThemeMeshCache.GetRenderGroups(_themeName, spawnData.noteType, spawnData.isStarPowerVisible);
 
-            // Collect all batch assignments across ALL render groups (not just [0]).
-            // NOTE: batch.activeCount is NOT modified here — it is owned exclusively by
-            // per-frame uploads (BeginUploadFrame resets, UploadInstance increments).
-            // LocalIndex is a stale hint only; UploadToGPU uses fresh sequential positions.
+            // Collect all batch assignments across ALL render groups.
+            // batch.activeCount is owned exclusively by per-frame uploads.
+            int playerHint = 1;
+            if (_gameManager?.Players != null)
+                playerHint = Mathf.Max(1, _gameManager.Players.Count);
+
             var assignments = new List<NoteBatchAssignment>();
 
             if (renderData.Colored != null)
@@ -115,14 +117,17 @@ namespace YARG.Gameplay.Visuals.Instancing
                 for (int i = 0; i < renderData.Colored.Length; i++)
                 {
                     var group = renderData.Colored[i];
-                    var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                    var batch = _graphicsSystem.GetOrCreateBatch(
+                        group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID,
+                        _capacity, group.MeshLocalOffset,
+                        group.EmissionAddition, group.EmissionMultiplier, playerHint);
                     if (batch != null)
                     {
                         assignments.Add(new NoteBatchAssignment
                         {
                             Batch = batch,
-                            LocalIndex = 0,
-                            ColorField = NoteDataField.Color
+                            ColorField = NoteDataField.Color,
+                            IsMetal = false
                         });
                     }
                 }
@@ -133,14 +138,17 @@ namespace YARG.Gameplay.Visuals.Instancing
                 for (int i = 0; i < renderData.NoStarPower.Length; i++)
                 {
                     var group = renderData.NoStarPower[i];
-                    var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                    var batch = _graphicsSystem.GetOrCreateBatch(
+                        group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID,
+                        _capacity, group.MeshLocalOffset,
+                        group.EmissionAddition, group.EmissionMultiplier, playerHint);
                     if (batch != null)
                     {
                         assignments.Add(new NoteBatchAssignment
                         {
                             Batch = batch,
-                            LocalIndex = 0,
-                            ColorField = NoteDataField.ColorNoStarPower
+                            ColorField = NoteDataField.ColorNoStarPower,
+                            IsMetal = false
                         });
                     }
                 }
@@ -151,14 +159,17 @@ namespace YARG.Gameplay.Visuals.Instancing
                 for (int i = 0; i < renderData.Metal.Length; i++)
                 {
                     var group = renderData.Metal[i];
-                    var batch = _graphicsSystem.GetOrCreateBatch(group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID, _capacity, group.MeshLocalOffset);
+                    var batch = _graphicsSystem.GetOrCreateBatch(
+                        group.Mesh, group.Material, group.SubmeshIndex, group.SourceRendererID,
+                        _capacity, group.MeshLocalOffset,
+                        0f, 1f, playerHint);
                     if (batch != null)
                     {
                         assignments.Add(new NoteBatchAssignment
                         {
                             Batch = batch,
-                            LocalIndex = 0,
-                            ColorField = NoteDataField.MetalColor
+                            ColorField = NoteDataField.MetalColor,
+                            IsMetal = true
                         });
                     }
                 }
@@ -316,10 +327,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                     spawn.scale
                 );
 
-                // Upload to ALL batch assignments (all render groups).
-                // The write slot is batch.activeCount itself — BeginUploadFrame reset it to 0
-                // and UploadInstance increments it. Because batches are shared across trackers,
-                // using activeCount as the slot ensures trackers append (not overwrite) each other.
+                // Upload to ALL batch assignments. Slot = batch.activeCount (shared append).
                 var assignments = _batchAssignments[i];
                 if (assignments == null) continue;
                 for (int j = 0; j < assignments.Length; j++)
@@ -337,13 +345,32 @@ namespace YARG.Gameplay.Visuals.Instancing
                         _ => data.color
                     };
 
+                    // Match NoteGroup.SetColorWithEmission / SetMetalColor:
+                    // colored: albedo = color + addition, emission = albedo * multiplier
+                    // metal:   albedo = emission = metalColor
+                    Vector4 baseColor;
+                    Vector4 emission;
+                    if (assignment.IsMetal)
+                    {
+                        baseColor = color;
+                        emission = color;
+                    }
+                    else
+                    {
+                        float add = assignment.Batch.emissionAddition;
+                        float mul = assignment.Batch.emissionMultiplier;
+                        baseColor = new Vector4(color.x + add, color.y + add, color.z + add, color.w);
+                        emission = new Vector4(baseColor.x * mul, baseColor.y * mul, baseColor.z * mul, baseColor.w);
+                    }
+
                     int pos = assignment.Batch.activeCount;
-                    _graphicsSystem.UploadInstance(assignment.Batch, pos, worldMatrix, color);
+                    _graphicsSystem.UploadInstance(
+                        assignment.Batch, pos, worldMatrix, baseColor, emission,
+                        data.randomFloat, data.randomVector);
                 }
             }
 
-            // Flush uploads
-            _graphicsSystem.UploadDirtyData(default);
+            // Commit is owned by HighwayElementGraphicsSystem.EndUploadFrame (once/frame).
             }
             finally
             {

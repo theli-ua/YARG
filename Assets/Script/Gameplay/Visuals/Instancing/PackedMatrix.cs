@@ -31,34 +31,61 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             return new PackedMatrix
             {
-                // Column 0: m00, m10, m20 (skip m30)
                 c0x = m.m00, c0y = m.m10, c0z = m.m20,
-                // Column 1: m01, m11, m21 (skip m31)
                 c1x = m.m01, c1y = m.m11, c1z = m.m21,
-                // Column 2: m02, m12, m22 (skip m32)
                 c2x = m.m02, c2y = m.m12, c2z = m.m22,
-                // Column 3: m03, m13, m23 (skip m33)
                 c3x = m.m03, c3y = m.m13, c3z = m.m23,
             };
         }
 
         /// <summary>
-        /// Computes the inverse of the given Matrix4x4 and packs it
-        /// into a float3x4 layout (same as FromMatrix4x4).
+        /// Full inverse via <see cref="Matrix4x4.inverse"/> then pack. Prefer
+        /// <see cref="FromAffineInverse"/> for highway notes (pure TRS, no shear).
         /// </summary>
         public static PackedMatrix FromInverse(Matrix4x4 m)
         {
-            Matrix4x4 inv = m.inverse;
+            return FromMatrix4x4(m.inverse);
+        }
+
+        /// <summary>
+        /// Fast inverse for affine TRS matrices used by highway notes
+        /// (orthogonal rotation + non-uniform scale + translation). Avoids
+        /// general 4x4 inverse. Falls back to full inverse if scale near-zero.
+        /// </summary>
+        public static PackedMatrix FromAffineInverse(Matrix4x4 m)
+        {
+            // Columns of the upper-left 3x3 are scaled basis vectors.
+            Vector3 axisX = new Vector3(m.m00, m.m10, m.m20);
+            Vector3 axisY = new Vector3(m.m01, m.m11, m.m21);
+            Vector3 axisZ = new Vector3(m.m02, m.m12, m.m22);
+
+            float sx2 = axisX.sqrMagnitude;
+            float sy2 = axisY.sqrMagnitude;
+            float sz2 = axisZ.sqrMagnitude;
+
+            const float eps = 1e-12f;
+            if (sx2 < eps || sy2 < eps || sz2 < eps)
+                return FromInverse(m);
+
+            // Inverse of R*S is (1/s^2) * R^T for each scaled axis column.
+            Vector3 invRow0 = axisX / sx2;
+            Vector3 invRow1 = axisY / sy2;
+            Vector3 invRow2 = axisZ / sz2;
+
+            Vector3 t = new Vector3(m.m03, m.m13, m.m23);
+            // inv translation = -R^T * S^-1 * t
+            float tx = -(invRow0.x * t.x + invRow0.y * t.y + invRow0.z * t.z);
+            float ty = -(invRow1.x * t.x + invRow1.y * t.y + invRow1.z * t.z);
+            float tz = -(invRow2.x * t.x + invRow2.y * t.y + invRow2.z * t.z);
+
+            // Pack as columns of inverse (rows of invRow become columns when transposed back).
+            // inv M upper-left = [invRow0; invRow1; invRow2] as rows = columns (invRow0.x, invRow1.x, invRow2.x), ...
             return new PackedMatrix
             {
-                // Column 0: m00, m10, m20 (skip m30)
-                c0x = inv.m00, c0y = inv.m10, c0z = inv.m20,
-                // Column 1: m01, m11, m21 (skip m31)
-                c1x = inv.m01, c1y = inv.m11, c1z = inv.m21,
-                // Column 2: m02, m12, m22 (skip m32)
-                c2x = inv.m02, c2y = inv.m12, c2z = inv.m22,
-                // Column 3: m03, m13, m23 (skip m33)
-                c3x = inv.m03, c3y = inv.m13, c3z = inv.m23,
+                c0x = invRow0.x, c0y = invRow1.x, c0z = invRow2.x,
+                c1x = invRow0.y, c1y = invRow1.y, c1z = invRow2.y,
+                c2x = invRow0.z, c2y = invRow1.z, c2z = invRow2.z,
+                c3x = tx,        c3y = ty,        c3z = tz,
             };
         }
     }
