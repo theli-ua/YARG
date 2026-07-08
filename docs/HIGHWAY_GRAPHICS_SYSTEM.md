@@ -61,7 +61,6 @@ Offset 64+:    HeapAllocator-managed regions
 **ElementBatch** (class — mutations persist in registry):
 - BRG IDs, capacity, activeCount, SoA byte offsets
 - `meshLocalOffset`, `emissionAddition`, `emissionMultiplier`
-- `framesUnused` — for GC (not live activeCount)
 
 **BatchKey:** `(meshInstanceID, materialInstanceID, submeshIndex, sourceRendererID)`
 
