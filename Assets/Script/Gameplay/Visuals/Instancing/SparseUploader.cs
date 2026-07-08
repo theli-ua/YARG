@@ -312,6 +312,10 @@ namespace YARG.Gameplay.Visuals.Instancing
 
                 DispatchUploads(numOps, buffer);
 
+                // Reset offsets after dispatch — critical: prevents unbounded growth → buffer overflow
+                m_OperationOffset = 0;
+                m_DataOffset = 0;
+
                 // Track frame for buffer recovery
                 m_CurrUploadBufferFrame = Time.renderedFrameCount;
             }
