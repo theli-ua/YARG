@@ -493,7 +493,18 @@ namespace YARG.Gameplay.Visuals.Instancing
                     return false;
                 }
 
-                windowSize = (uint)maxWindow;
+                // Window must not extend past the GraphicsBuffer end.
+                int bufferBytes = _gpuBuffer.count * _gpuBuffer.stride;
+                int maxFromOffset = bufferBytes - allocationBegin;
+                if (maxFromOffset < neededWindow)
+                {
+                    Debug.LogError(
+                        $"[HEGS] ConstantBuffer window past buffer end " +
+                        $"(need {neededWindow}, avail {maxFromOffset} from offset {allocationBegin})");
+                    return false;
+                }
+
+                windowSize = (uint)Mathf.Min(maxWindow, maxFromOffset);
             }
 
             // Metadata: Raw indexes from buffer start; ConstantBuffer from bindOffset (EGS pattern).
