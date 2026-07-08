@@ -3,33 +3,31 @@
 Instanced highway note heads via Unity `BatchRendererGroup` (BRG) + DOTS instancing.
 **Mental model:** highway particle/instancer with EGS-inspired GPU buffer layout — not a mini Entities Graphics clone.
 
-Replaces per-note GameObject/MeshRenderer note heads. Sustains and beatlines remain GameObjects (deferred).
+Replaces per-note GameObject/MeshRenderer note heads. Sustains and beatlines remain GameObjects (deferred).  
+**Performance claim scope:** note-head path only — sustains/beatlines still contribute to `CreateSharedRendererScene`.
+
+Authoritative design: `openspec/changes/custom-instanced-note-rendering/design.md`.
 
 ## Architecture Overview
 
 ```
 GameManager.Update
+    BeginHighwayInstanceUploads()          ← BeginUploadFrame (always; even 0 notes)
     └── foreach TrackPlayer.GameplayUpdate()
             ├── NoteTracker.RemoveExpired()
-            ├── NoteTracker.UpdateStarPowerColors() / pulse (when needed)
-            └── NoteTracker.UploadToGPU(trackLocalToWorld)
-                    ├── BeginUploadFrame()     — reset ALL batches' activeCount=0 (once/frame)
-                    └── for each active note × assignments:
-                          UploadInstance(O2W, W2O, baseColor, emission, random*)
-            // SP mesh reassignment deferred (no UpdateBatchAssignments)
+            ├── SP edge → UpdateStarPowerColors (dedicated flag)
+            ├── drums SP-activator pulse
+            └── NoteTracker.UploadToGPU     ← queue ops only
+    FlushHighwayInstanceUploads()          ← EndUploadFrame → Commit
+    HighwayCameraRendering.LateUpdate      ← EndUploadFrame backup only
 
-GameManager.Update (after all TrackPlayers)  ← primary flush site
-    └── TrackViewManager.FlushHighwayInstanceUploads()
-            └── EndUploadFrame() → SparseUploader.Commit()
-    HighwayCameraRendering.LateUpdate → EndUploadFrame backup only
-    (Do not rely on HCR LateUpdate alone — missed commits stuck SparseUploader full)
-
-No batch GC. Memory upper-bounded by theme batch set × capacity (with EnsureCapacity grow).
+No batch GC. Memory upper-bounded by theme batch set × fixed capacity.
 All batches freed only when HEGS is disposed (song/session end).
 
-BRG Culling (render thread)
+BRG Culling (render thread, highway camera viewID only)
     └── OnPerformCullingCallback()
-            └── for each batch with activeCount > 0:
+            if viewID != highwayCamera → empty
+            else for each batch with activeCount > 0:
                   BatchDrawCommand { visibleCount = activeCount, splitVisibilityMask = 0xffff }
                   visibleInstances = [0 .. activeCount-1]
 ```
@@ -40,23 +38,26 @@ BRG Culling (render thread)
 
 One instance per highway camera, shared by all players on that camera.
 
-**Owns:** `BatchRendererGroup`, shared `GraphicsBuffer`, `HeapAllocator`, `SparseUploader`, batch registry.
+**Owns:** `BatchRendererGroup`, shared `GraphicsBuffer`, `HeapAllocator`, `SparseUploader`, batch registry, `_highwayCameraID`.
+
+**Does not own:** tracker lists (trackers hold HEGS ref).
 
 **GPU Buffer Layout:**
 ```
 Offset 0:      64 bytes of zeros (BRG safety — unset metadata reads addr 0)
 Offset 64+:    HeapAllocator-managed regions
-    Each batch (SoA, 160 bytes/instance):
+    Each batch (SoA, ~160 bytes/instance budget):
         [objectToWorld: 48*N]   // packed float3x4
         [worldToObject: 48*N]   // packed float3x4 (affine inverse)
         [baseColor:     16*N]   // float4 _BaseColor
         [emission:      16*N]   // float4 _EmissionColor + _Emission (same region)
-        [randomFloat:    4*N]   // float _RandomFloat (stride must match shader)
+        [randomFloat:    4*N]   // float _RandomFloat
         [randomVector:  16*N]   // float4 _RandomVector (xy used)
-        // region starts 16-aligned; heap block sized ~160*N
 ```
 
-**Initial buffer:** 8 MB (grows up to 64 MB on demand). Growth commits pending uploads, copies existing contents, remaps batch buffer handles, recreates SparseUploader.
+**Initial buffer:** 8 MB (grows up to 64 MB on demand for *new* heap allocations). Growth commits pending uploads, copies existing contents, remaps batch buffer handles, recreates SparseUploader.
+
+**ConstantBuffer platforms (e.g. Metal):** `AddBatch(metadata, handle, bufferOffset, windowSize)` with alignment + max window caps. Batch create fails if SoA does not fit max window.
 
 **ElementBatch** (class — mutations persist in registry):
 - BRG IDs, capacity, activeCount, SoA byte offsets
@@ -64,128 +65,96 @@ Offset 64+:    HeapAllocator-managed regions
 
 **BatchKey:** `(meshInstanceID, materialInstanceID, submeshIndex, sourceRendererID)`
 
-**Capacity:** new batches size to `capacityPerPlayer × max(playerCount, 4)`. Overflow grows via `EnsureCapacity` (re-AddBatch; dense rewrite means no need to preserve GPU slots).
+**Capacity (fixed at create):** `capacityPerPlayer × max(playerCount, 4)`.  
+**No mid-frame grow after instances written this frame** (would wipe prior tracker appends). Overflow → drop + log.
 
 #### Critical Invariants
 
-**1. `activeCount` ownership**
-Only writers:
-- `BeginUploadFrame()` — reset all to 0 once/frame (`Time.frameCount`)
-- `UploadInstance()` — bump to cover written slot
-
-`Add()` / `Remove()` / `RemoveExpired()` MUST NOT touch `activeCount`.
-
-**2. Shared-batch append**
-Batches shared across trackers (same theme → same key). Write slot = `batch.activeCount` so trackers append, never overwrite.
-
-**3. Single commit/frame**
-Trackers only `AddUpload`. `EndUploadFrame()` (HCR `LateUpdate`) commits once.
-
-**4. No batch GC**
-Bounded set for a theme/song. Cleanup only on HEGS `Dispose`.
+1. **`activeCount` ownership** — only `BeginUploadFrame` (reset) and `UploadInstance` (bump)
+2. **Shared-batch append** — write slot = `batch.activeCount`
+3. **Begin always / Commit once** — GM boundary; trackers never Commit
+4. **No batch GC mid-song**
+5. **Highway camera filter** — `viewID.GetInstanceID() == _highwayCameraID`
+6. **No capacity grow after write this frame**
 
 ### SparseUploader
 
-EGS-style scatter into destination GraphicsBuffer.
+EGS-style scatter into destination GraphicsBuffer. Dense rewrite access pattern (historical name).
 
-- **Compute path (default):** ring of `NumFramesInFlight+1` intermediate buffers, LockBufferForWrite, ops from start / data from end, Dispatch
+- **Compute path (default):** ring of `NumFramesInFlight+1` intermediate buffers
 - **Direct fallback:** stage + single `SetData` over dirty range
-- **Guards:** ops+data must not meet in the middle (drop + error log if full)
-- **CommitCompute:** always clears lock + `m_OperationOffset`/`m_DataOffset` (next frame re-locks clean)
-- **repeatCount:** one Operation with `count=N` (EGS semantics), not N ops
+- **CommitCompute:** always clears lock + offsets
 
 ### NoteTracker
 
 Per-TrackPlayer CPU state. Flat arrays, swap-remove, chart-note reverse lookup.
 
-**Per frame (GameplayUpdate):**
-1. `RemoveExpired` — Z &lt; -4, backward scan, no alloc
+**Per frame:**
+1. `RemoveExpired` — Z < -4
 2. SP color / drums activator pulse when needed
-3. `UploadToGPU` — Z from visual time, world = trackL2W × T(baseX,0,z)×S(scale) × meshLocal
+3. `UploadToGPU` — world = trackL2W × T(baseX,0,z)×S(scale) × meshLocal
 
-**Color / emission parity (matches old NoteGroup):**
-- Colored / NoSP: `baseColor = color + EmissionAddition`, `emission = baseColor * EmissionMultiplier`
-- Metal: `baseColor = emission = metalColor`
-- `_RandomFloat` / `_RandomVector` uploaded per instance from `NoteData`
+**Hit/miss:** immediate `TryRemoveByNote` for **all** hits including sustain heads. Line stays GO.
 
-**Hit/miss:** immediate `TryRemoveByNote` — intentional; no sliding miss-colored head on BRG path.
+**Spawn Add:** no per-note `List` allocation for assignments.
 
 ### ThemeMeshCache
 
-Load-time extract from theme prefabs (caller instantiates once, destroys after).
-
-`RenderGroup`: mesh, submesh, material, meshLocalOffset, sourceRendererID, emission add/mul.
-
-**Submesh:** material index ≠ always submesh. Single-submesh → 0; multi → clamp material index to submesh count.
-
-**Materials:** `sharedMaterials` (no per-note clone). Instancing enabled on assets.
-
-### PackedMatrix
-
-48-byte float3x4. `FromAffineInverse` for TRS notes (no full 4x4 inverse each instance).
+Load-time extract. `RenderGroup`: mesh, submesh, material, meshLocalOffset, sourceRendererID, emission add/mul.
 
 ## Frame Timeline
 
 ```
 Main Thread Update:
-    TrackPlayers → NoteTracker.UploadToGPU (queue scatter ops only)
+    BeginUploadFrame → activeCount=0 all batches
+    TrackPlayers → NoteTracker.UploadToGPU (queue only)
+    EndUploadFrame → SparseUploader.Commit
 
-Main Thread LateUpdate (HighwayCameraRendering):
-    EndUploadFrame → SparseUploader.Commit → compute dispatch
-
-Render Thread:
+Render Thread (highway camera only):
     BRG OnPerformCulling → draw commands
-    Forward: Hybrid Batch Group note draws into highway RT
-    FadePass: same batches + HighwaysAlphaMask override (DOTS instance ID required)
+    Forward Hybrid Batch Group into highway RT
+    FadePass: HighwaysAlphaMask + DOTS instance ID
     HighwayComposite: SrcAlpha blend to backbuffer
 ```
 
 ## Fade Pass + BRG
 
-FadePass override material **does** apply to Hybrid Batch Group in Frame Debugger, but only writes correct pixels if `HighwaysAlphaMask`:
+See `docs/RENDERING_PIPELINE.md`. Override material needs:
 - `#pragma multi_compile _ DOTS_INSTANCING_ON`
 - `UNITY_VERTEX_INPUT_INSTANCE_ID` + `UNITY_SETUP_INSTANCE_ID` in vert
-
-Without instance setup, alpha lands at wrong screen positions → notes stay full opacity past fade.
-
-See `docs/RENDERING_PIPELINE.md` Fade Pass section.
 
 ## Performance
 
 | Metric | GameObject path | BRG path |
 |--------|-----------------|----------|
-| Draw calls | 1 per note mesh | 1 per batch |
-| CreateSharedRendererScene | Per-note churn | Zero for note heads |
-| MonoBehaviour LateUpdate | Per note | Zero for note heads |
-| GPU upload | Unity automatic | Dense rewrite via SparseUploader (1 commit/frame) |
+| Draw calls (note heads) | 1 per note mesh | 1 per batch |
+| CreateSharedRendererScene (heads) | Per-note churn | Zero for heads |
+| MonoBehaviour LateUpdate (heads) | Per note | Zero for heads |
+| GPU upload | Unity automatic | Dense rewrite, 1 commit/frame |
 
-**Known cost:** 3 material categories × same transforms (Colored / NoSP / Metal). Acceptable; optional later: share O2W/W2O SoA across category batches.
-
-**Not Burst-parallel yet.** Main-thread fill is fine for hundreds of visible notes.
+**Known cost:** 3 material categories × same transforms (Decision 18 deferred — ConstantBuffer window constraints).
 
 ## Shader Requirements
 
-Note shaders:
-- `_BaseColor` DOTS instanced (Shader Graph override reference)
-- Prefer `_Emission` / `_EmissionColor` readable as DOTS props (same buffer region)
-- `_RandomFloat`, `_RandomVector` if theme uses them
+- `_BaseColor` DOTS instanced
+- `_Emission` / `_EmissionColor`, `_RandomFloat`, `_RandomVector` if theme uses them
 - `m_EnableInstancingVariants: 1`
-- Highway clip via `highways.hlsl` / Yarg transforms (multi-highway)
+- Highway clip via `highways.hlsl`
 
 ## Thread Safety
 
-- `AddUpload` / `UploadInstance` — main thread only
-- `OnPerformCulling` — render thread, no managed alloc (`UnsafeUtility.Malloc(TempJob)`)
-- Commit before render via LateUpdate ordering
+- `AddUpload` / `UploadInstance` / Begin/End — main thread only
+- `OnPerformCulling` — render thread; `_highwayCameraID` written once at setup before render
+- Commit before render via GM flush (+ LateUpdate backup)
 
 ## Known Limitations
 
 1. Sustain lines / beatlines still GameObjects
-2. SP **mesh** variant switching deferred (`UpdateBatchAssignments` no-op); SP **color** works
-3. Hit/miss removes head immediately (no lingering miss mesh on BRG path)
-4. Dense SparseUploader use (full rewrite) — not sparse dirty-bits; fine at current N
-5. No frustum cull (huge global bounds)
-6. Three category batches still triple transform bandwidth
+2. SP **mesh** variant switching deferred; SP **color** works
+3. Miss removes head immediately (no lingering miss mesh)
+4. Dense SparseUploader use — fine at current N
+5. No frustum cull of instances (global bounds; camera filter only)
+6. Three category batches triple transform bandwidth
 7. Debug logs gated: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`
 
 ## Key Files
@@ -199,5 +168,6 @@ Note shaders:
 | `PackedMatrix.cs` | float3x4 + affine inverse |
 | `NoteData.cs` | Blittable note + spawn structs |
 | `HighwaysAlphaMask.shader` | Fade A-channel (DOTS-safe) |
-| `TrackPlayer.cs` | Spawn / GameplayUpdate integration |
-| `HighwayCameraRendering.cs` | Owns HEGS; `EndUploadFrame` in LateUpdate |
+| `TrackPlayer.cs` | Spawn / GameplayUpdate / SP edge |
+| `HighwayCameraRendering.cs` | Owns HEGS; SetHighwayCamera; flush API |
+| `GameManager.cs` / `TrackViewManager.cs` | Begin/End upload frame boundary |
