@@ -9,23 +9,12 @@ using UnityEngine.Rendering;
 namespace YARG.Gameplay.Visuals.Instancing
 {
     /// <summary>
-    /// Interface for note trackers that this system renders.
-    /// </summary>
-    internal interface INoteTracker
-    {
-        void UpdatePositions();
-        void RemoveExpired();
-        void UpdateBatchAssignments();
-        void UploadToGPU(Matrix4x4 trackLocalToWorld);
-        void Reset();
-    }
-
-    /// <summary>
     /// Manages instanced rendering of highway elements (notes, holds, etc.)
     /// using Unity's BatchRendererGroup API with SoA layout in GPU memory.
     ///
     /// Access pattern is dense per-frame rewrite (highway "particle" model),
     /// with EGS-inspired GPU buffer layout + SparseUploader.
+    /// Trackers call UploadInstance directly; this system does not own tracker lists.
     /// </summary>
     internal class HighwayElementGraphicsSystem : IDisposable
     {
@@ -41,12 +30,11 @@ namespace YARG.Gameplay.Visuals.Instancing
         // Batch registry: BatchKey → ElementBatch
         private readonly Dictionary<BatchKey, ElementBatch> _batches = new();
 
-        // Tracker registry (lifecycle only — culling does not query trackers)
-        private readonly List<INoteTracker> _trackers = new();
-
         // Mesh/material ID caches
         private readonly Dictionary<int, BatchMeshID> _meshIDs = new();
         private readonly Dictionary<int, BatchMaterialID> _materialIDs = new();
+
+        private int _gcFrameCounter;
 
         // 8MB default — multiplayer + multi-mesh themes need headroom beyond 2MB
         private const int InitialBufferSize = 8 * 1024 * 1024;
@@ -229,7 +217,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
 
             _batches.Clear();
-            _trackers.Clear();
             _meshIDs.Clear();
             _materialIDs.Clear();
         }
@@ -582,6 +569,14 @@ namespace YARG.Gameplay.Visuals.Instancing
                     else
                         batch.framesUnused++;
                 }
+
+                // Periodic GC of long-unused batches (not every frame; uses framesUnused).
+                _gcFrameCounter++;
+                if (_gcFrameCounter >= 300)
+                {
+                    _gcFrameCounter = 0;
+                    GarbageCollectEmptyBatches(600);
+                }
             }
             finally
             {
@@ -603,13 +598,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 _sparseUploader.Commit();
 
             _uploadsOpen = false;
-        }
-
-        /// <summary>Legacy name — prefer <see cref="EndUploadFrame"/>.</summary>
-        internal JobHandle UploadDirtyData(JobHandle dependency)
-        {
-            EndUploadFrame();
-            return dependency;
         }
 
         #endregion
@@ -719,51 +707,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             {
                 UnityEngine.Profiling.Profiler.EndSample();
             }
-        }
-
-        #endregion
-
-        #region Mesh/Material Registration
-
-        internal BatchMeshID RegisterMesh(Mesh mesh)
-        {
-            if (_disposed) return default;
-            int id = mesh.GetInstanceID();
-            if (_meshIDs.TryGetValue(id, out var cached))
-                return cached;
-
-            var meshID = _brg.RegisterMesh(mesh);
-            _meshIDs[id] = meshID;
-            return meshID;
-        }
-
-        internal BatchMaterialID RegisterMaterial(Material material)
-        {
-            if (_disposed) return default;
-            int id = material.GetInstanceID();
-            if (_materialIDs.TryGetValue(id, out var cached))
-                return cached;
-
-            var matID = _brg.RegisterMaterial(material);
-            _materialIDs[id] = matID;
-            return matID;
-        }
-
-        #endregion
-
-        #region Tracker Management
-
-        internal void RegisterNoteTracker(INoteTracker tracker)
-        {
-            if (_disposed) return;
-            if (!_trackers.Contains(tracker))
-                _trackers.Add(tracker);
-        }
-
-        internal void UnregisterNoteTracker(INoteTracker tracker)
-        {
-            if (_disposed) return;
-            _trackers.Remove(tracker);
         }
 
         #endregion

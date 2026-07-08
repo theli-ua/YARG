@@ -16,13 +16,16 @@ GameManager.Update
                     ├── BeginUploadFrame()     — reset ALL batches' activeCount=0 (once/frame)
                     └── for each active note × assignments:
                           UploadInstance(O2W, W2O, baseColor, emission, random*)
+            // SP mesh reassignment deferred (no UpdateBatchAssignments)
 
-GameManager.Update (after all TrackPlayers)
+GameManager.Update (after all TrackPlayers)  ← primary flush site
     └── TrackViewManager.FlushHighwayInstanceUploads()
             └── EndUploadFrame()
-                    ├── SparseUploader.Commit()   — once per frame after all trackers
-                    └── framesUnused accounting for GC
-    (HCR.LateUpdate also calls EndUploadFrame as backup)
+                    ├── SparseUploader.Commit()
+                    ├── framesUnused accounting
+                    └── periodic GarbageCollectEmptyBatches (every ~300 frames)
+    HighwayCameraRendering.LateUpdate → EndUploadFrame backup only
+    (Do not rely on HCR LateUpdate alone — missed commits stuck SparseUploader full)
 
 BRG Culling (render thread)
     └── OnPerformCullingCallback()

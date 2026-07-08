@@ -16,9 +16,10 @@ namespace YARG.Gameplay.Visuals.Instancing
     /// <summary>
     /// CPU-side tracker for instanced note rendering.
     /// Manages flat arrays of note data, spawn data, and batch assignments.
-    /// Implements INoteTracker for integration with HighwayElementGraphicsSystem.
+    /// Uploads via <see cref="HighwayElementGraphicsSystem.UploadInstance"/>;
+    /// commit is owned by GameManager → EndUploadFrame.
     /// </summary>
-    public class NoteTracker : INoteTracker, IDisposable
+    public class NoteTracker : IDisposable
     {
         // CPU-side data — flat arrays, one entry per spawned note
         private NativeArray<NoteData> _notes;
@@ -244,17 +245,6 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         /// <summary>
-        /// Update positions for all active notes.
-        /// Phase 1: no-op — Z computation happens in UploadToGPU.
-        /// </summary>
-        public void UpdatePositions()
-        {
-            // Positions are computed during UploadToGPU, not here.
-            // This method is a no-op for Phase 1 — the actual Z computation
-            // happens in UploadToGPU where we have the trackLocalToWorld matrix.
-        }
-
-        /// <summary>
         /// Remove notes that have passed the remove point.
         /// Uses swap-remove with last active element to preserve batch index integrity.
         /// </summary>
@@ -282,18 +272,9 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         /// <summary>
-        /// Update batch assignments for star power state changes.
-        /// Phase 1: placeholder — will be implemented with ThemeMeshCache integration.
-        /// </summary>
-        public void UpdateBatchAssignments()
-        {
-            // Phase 1: placeholder. SP state change detection and batch reassignment
-            // will be implemented when ThemeMeshCache integration is complete (section 5).
-        }
-
-        /// <summary>
         /// Upload note data to GPU for the current frame.
         /// Computes Z position and builds world matrices for each active note.
+        /// SP mesh variant switching is deferred (would reassign batches here).
         /// </summary>
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {
@@ -404,7 +385,6 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (_spawnData.IsCreated) _spawnData.Dispose();
 
             _noteToIndex.Clear();
-            _graphicsSystem?.UnregisterNoteTracker(this);
         }
 
         // ---- Task 4.x: Reverse lookup helpers ----

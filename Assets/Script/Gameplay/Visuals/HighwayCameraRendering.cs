@@ -374,16 +374,6 @@ namespace YARG.Gameplay.Visuals
             AddPlayerParams(trackPlayer.transform.position, trackPlayer.TrackCamera, trackPlayer.Player.CameraPreset.CurveFactor, trackPlayer.ZeroFadePosition, trackPlayer.FadeSize, trackPlayer.Player.CameraPreset.Rotation);
         }
 
-        internal void RegisterNoteTracker(INoteTracker tracker)
-        {
-            _graphicsSystem?.RegisterNoteTracker(tracker);
-        }
-
-        internal void UnregisterNoteTracker(INoteTracker tracker)
-        {
-            _graphicsSystem?.UnregisterNoteTracker(tracker);
-        }
-
         internal HighwayElementGraphicsSystem GraphicsSystem => _graphicsSystem;
 
         /// <summary>

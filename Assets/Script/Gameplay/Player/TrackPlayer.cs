@@ -321,7 +321,6 @@ namespace YARG.Gameplay.Player
                     graphicsSystem,
                     this,
                     GameManager);
-                hcr.RegisterNoteTracker(NoteTracker);
                 if (ThemeMeshCache.DebugLogging)
                     Debug.Log($"[TrackPlayer{HighwayIndex}] NoteTracker initialized (capacity={NotePool.ObjectCap}, theme={themePreset.Name})");
             }
@@ -342,7 +341,6 @@ namespace YARG.Gameplay.Player
             // Cleanup NoteTracker for instanced rendering
             if (NoteTracker != null)
             {
-                HighwayCameraRendering?.UnregisterNoteTracker(NoteTracker);
                 NoteTracker.Dispose();
                 NoteTracker = null;
             }
@@ -1256,9 +1254,7 @@ namespace YARG.Gameplay.Player
 
             if (NoteTracker != null)
             {
-                NoteTracker.UpdatePositions();
                 NoteTracker.RemoveExpired();
-                NoteTracker.UpdateBatchAssignments();
 
                 // Task 10.1: Check for star power state change and update in-flight note colors
                 var stats = Engine.BaseStats;
