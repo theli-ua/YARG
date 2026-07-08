@@ -24,8 +24,8 @@ GameManager.Update (after all TrackPlayers)  ← primary flush site
     HighwayCameraRendering.LateUpdate → EndUploadFrame backup only
     (Do not rely on HCR LateUpdate alone — missed commits stuck SparseUploader full)
 
-Batch lifetime = HEGS / song session. No mid-gameplay batch GC (time-based free → spikes;
-EGS unreferenced-this-frame thrash under dense rewrite). Dispose tears down all batches.
+No batch GC. Memory upper-bounded by theme batch set × capacity (with EnsureCapacity grow).
+All batches freed only when HEGS is disposed (song/session end).
 
 BRG Culling (render thread)
     └── OnPerformCullingCallback()
@@ -82,8 +82,8 @@ Batches shared across trackers (same theme → same key). Write slot = `batch.ac
 **3. Single commit/frame**
 Trackers only `AddUpload`. `EndUploadFrame()` (HCR `LateUpdate`) commits once.
 
-**4. No mid-gameplay batch GC**
-Batches live for the song/session. Free only on HEGS dispose (or explicit `ReleaseAllBatches`).
+**4. No batch GC**
+Bounded set for a theme/song. Cleanup only on HEGS `Dispose`.
 
 ### SparseUploader
 

@@ -482,31 +482,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             return true;
         }
 
-        internal void RemoveBatch(BatchKey key)
-        {
-            if (_disposed) return;
-            if (!_batches.TryGetValue(key, out var batch))
-                return;
-
-            _heapAllocator.Release(batch.gpuAllocation);
-            _brg.RemoveBatch(batch.batchID);
-            _batches.Remove(key);
-        }
-
-        /// <summary>
-        /// Explicit teardown of all batches. Not for mid-gameplay use.
-        /// Highway batch set is small and theme-stable for a song; time-based bulk
-        /// GC causes frame spikes, and EGS-style same-frame unreferenced GC thrash
-        /// under dense rewrite (activeCount often 0 between notes). Lifetime = HEGS.
-        /// </summary>
-        internal void ReleaseAllBatches()
-        {
-            if (_disposed || _brg == null) return;
-
-            var keys = new List<BatchKey>(_batches.Keys);
-            foreach (var key in keys)
-                RemoveBatch(key);
-        }
+        // No batch GC during gameplay. Upper bound = capacity × batches for the theme;
+        // free everything only in Dispose (song/session teardown).
 
         #endregion
 
