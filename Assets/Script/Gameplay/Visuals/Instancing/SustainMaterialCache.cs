@@ -34,11 +34,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (mat == null)
                 return;
 
-            s_cache[(themeName, kind)] = new Entry
-            {
-                Material = mat,
-                Width = line.Width > 0f ? line.Width : 0.1f
-            };
+            float w = line.Width > 0f ? line.Width : 0.1f;
+            s_cache[(themeName, kind)] = new Entry { Material = mat, Width = w };
         }
 
         internal static void ExtractFromPrefab(string themeName, GameObject themePrefab)
@@ -95,10 +92,13 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (!s_cache.ContainsKey((themeName, SustainKind.Normal)))
             {
-                Debug.LogError(
-                    $"[SustainMaterialCache] No sustain materials for theme '{themeName}' " +
-                    $"(noteElements={fromElements}, SustainLine count={lineCount}). " +
-                    "BRG sustain strips will not render.");
+                // Drums/etc. have no SustainLine — expected, not an error.
+                if (fromElements > 0 || lineCount > 0)
+                {
+                    Debug.LogWarning(
+                        $"[SustainMaterialCache] Theme '{themeName}': note elements found but no usable sustain mats " +
+                        $"(noteElements={fromElements}, SustainLine count={lineCount})");
+                }
             }
             else
             {

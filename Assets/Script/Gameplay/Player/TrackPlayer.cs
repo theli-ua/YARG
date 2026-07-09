@@ -319,7 +319,7 @@ namespace YARG.Gameplay.Player
                 }
 
                 ThemeMeshCache.ExtractTheme(themeName, themeModels, spModels);
-                SustainMaterialCache.ExtractFromPrefab(themeName, instance);
+                // Sustain mats already extracted from stock prefab in SetupTheme.
 
                 // Dictionaries only used above; free the temp hierarchy now.
                 themeModels.Clear();
@@ -459,6 +459,21 @@ namespace YARG.Gameplay.Player
             var (gameMode, instrument) = (Player.Profile.GameMode, Player.Profile.CurrentInstrument);
 
             var style = VisualStyleHelpers.GetVisualStyle(gameMode, instrument);
+
+            // Sustain mats live on the stock note prefab (FiveFretGuitarNote etc.).
+            // ThemeManager caches an inactive themed clone where SustainLine search is unreliable.
+            // Extract from stock prefab BEFORE SetPrefabAndReset swaps the pool prefab.
+            var themeName = Player.ThemePreset?.Name ?? "Unknown";
+            if (NotePool?.Prefab != null)
+            {
+                var stock = NotePool.Prefab;
+                var sustainHost = GameObject.Instantiate(stock);
+                sustainHost.name = stock.name + "_SustainExtract";
+                sustainHost.SetActive(true);
+                sustainHost.transform.position = new Vector3(0f, -1000f, 0f);
+                SustainMaterialCache.ExtractFromPrefab(themeName, sustainHost);
+                UnityEngine.Object.Destroy(sustainHost);
+            }
 
             var themePrefab = ThemeManager.Instance.CreateNotePrefabFromTheme(
                 Player.ThemePreset, style, NotePool.Prefab);

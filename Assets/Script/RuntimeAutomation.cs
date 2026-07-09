@@ -199,12 +199,13 @@ namespace YARG
 
             Debug.Log($"[RuntimeAutomation] Song started, waiting for notes...");
 
-            // Wait for notes to appear (skip song intro)
+            // Wait for notes to appear (skip song intro). Cap ~32s then proceed anyway
+            // so long intros / empty ActiveCount still produce screenshots.
+            bool hasNotes = false;
             for (int i = 0; i < 2000; i++)
             {
                 var tp = UnityEngine.Object.FindObjectsByType<YARG.Gameplay.Player.TrackPlayer>(
                     UnityEngine.FindObjectsInactive.Include, UnityEngine.FindObjectsSortMode.None);
-                bool hasNotes = false;
                 foreach (var t in tp)
                 {
                     if (t.NoteTracker != null && t.NoteTracker.ActiveCount > 0)
@@ -214,10 +215,15 @@ namespace YARG
                     }
                 }
                 if (hasNotes) break;
+                if (i > 0 && i % 300 == 0)
+                    Debug.LogWarning($"[RuntimeAutomation] Still waiting for NoteTracker.ActiveCount>0... ({i}/2000)");
                 yield return new WaitForSecondsRealtime(0.016f);
             }
 
-            Debug.Log($"[RuntimeAutomation] Notes appeared, running for {_duration}s");
+            if (hasNotes)
+                Debug.Log($"[RuntimeAutomation] Notes appeared, running for {_duration}s");
+            else
+                Debug.LogWarning($"[RuntimeAutomation] No notes after wait — running {_duration}s anyway for screenshots");
 
             // Take initial screenshot
             Directory.CreateDirectory(_screenshotDir);

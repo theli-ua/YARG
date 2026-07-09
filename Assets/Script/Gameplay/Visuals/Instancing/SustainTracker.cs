@@ -87,12 +87,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 _widthWildcard = _widthNormal;
             }
 
-            if (_batchNormal == null)
-            {
-                Debug.LogError(
-                    $"[SustainTracker] No Normal sustain batch for theme '{_themeName}' — " +
-                    "strips will not render (material cache miss or HEGS batch create failed)");
-            }
+            // _batchNormal null is OK for drums/themes without sustains.
         }
 
         internal int Add(object noteObject, SustainInstanceData data)
@@ -244,14 +239,16 @@ namespace YARG.Gameplay.Visuals.Instancing
                 float width = WidthFor(d.kind);
 
                 // Unit mesh: X[-0.5,0.5] Z[0,1] → scale (width,1,visibleLen).
-                // Y lift matches prefab SustainLine (0.01) so strip is not z-fought into the track.
+                // Y above track surface (prefab used ~0.01; BRG needs more to clear highway mesh).
                 Matrix4x4 local = Matrix4x4.TRS(
-                    new Vector3(d.baseX, 0.02f, noteZ + startZ),
+                    new Vector3(d.baseX, 0.08f, noteZ + startZ),
                     Quaternion.identity,
-                    new Vector3(width, 1f, visibleLen));
+                    new Vector3(Mathf.Max(width, 0.15f), 1f, visibleLen));
                 Matrix4x4 world = trackLocalToWorld * local;
 
                 Vector4 color = d.color;
+                // Transparent sustain SG multiplies texture * color; force opaque alpha.
+                color.w = 1f;
                 Vector4 emission;
                 float isActive;
                 switch (d.state)
@@ -270,6 +267,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                         isActive = 0f;
                         break;
                 }
+                emission.w = 1f;
 
                 int pos = batch.activeCount;
                 _graphics.UploadSustainInstance(
