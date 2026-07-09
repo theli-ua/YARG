@@ -24,7 +24,7 @@ namespace YARG.Gameplay
         [SerializeField]
         private int _prewarmAmount = 300;
         [SerializeField]
-        private int _objectCap = 2000;
+        private int _objectCap = 500;
 
         private readonly Stack<IPoolable> _pooled = new();
         private readonly List<IPoolable> _spawnedObjects = new();

@@ -5949,7 +5949,7 @@ MonoBehaviour:
   m_EditorClassIdentifier:
   <Prefab>k__BackingField: {fileID: 0}
   _prewarmAmount: 150
-  _objectCap: 2000
+  _objectCap: 500
 --- !u!1 &3797275969015020249
 GameObject:
   m_ObjectHideFlags: 0
