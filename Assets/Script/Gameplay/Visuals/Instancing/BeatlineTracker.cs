@@ -27,6 +27,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         private bool _disposed;
 
         internal int ActiveCount => _activeCount;
+        internal int Capacity => _capacity;
 
         internal BeatlineTracker(
             int capacity,
@@ -62,13 +63,14 @@ namespace YARG.Gameplay.Visuals.Instancing
                     meshLocalOffset: Matrix4x4.identity,
                     emissionAddition: 0f,
                     emissionMultiplier: 0f,
-                    playerCountHint: playerHint);
+                    playerCountHint: playerHint,
+                    useBeatlineCapacity: true);
 
                 if (_batch == null)
                 {
                     Debug.LogWarning(
                         "[BeatlineTracker] GetOrCreateBatch returned null — " +
-                        "beatlines will not draw (heap/CB window failure?)");
+                        "beatlines will not draw (fixed buffer full or AddBatch failed)");
                 }
             }
             else

@@ -350,22 +350,34 @@ namespace YARG.Gameplay.Player
 
             if (graphicsSystem != null && themePreset != null && NotePool != null)
             {
+                // Per-player CPU caps: min of design limit and equal share of HEGS GPU batch
+                // (CB platforms clamp shared capacity — must not exceed GPU slots).
+                int players = Mathf.Max(1, GameManager.Players?.Count ?? 1);
+                int noteCap = Mathf.Min(
+                    HighwayInstancingLimits.MaxNotesPerPlayer,
+                    Mathf.Max(32, graphicsSystem.NoteBatchCapacity / players));
+                int sustainCap = Mathf.Min(
+                    HighwayInstancingLimits.MaxSustainsPerPlayer,
+                    Mathf.Max(16, graphicsSystem.SustainBatchCapacity / players));
+                int beatlineCap = Mathf.Min(
+                    HighwayInstancingLimits.MaxBeatlinesPerPlayer,
+                    Mathf.Max(16, graphicsSystem.BeatlineBatchCapacity / players));
+
                 NoteTracker = new NoteTracker(
-                    NotePool.ObjectCap,
+                    noteCap,
                     themePreset.Name,
                     HighwayIndex,
                     graphicsSystem,
                     this,
                     GameManager);
                 SustainTracker = new SustainTracker(
-                    NotePool.ObjectCap,
+                    sustainCap,
                     themePreset.Name,
                     graphicsSystem,
                     this,
                     GameManager);
 
                 // Beatlines: extract mesh/mat from legacy pool prefab (single global asset).
-                int beatlineCap = BeatlinePool != null ? BeatlinePool.ObjectCap : 100;
                 if (BeatlinePool != null &&
                     YARG.Gameplay.Visuals.Instancing.BeatlineTracker.TryExtractFromPrefab(
                         BeatlinePool.Prefab, out var blMesh, out var blMat))
@@ -388,7 +400,7 @@ namespace YARG.Gameplay.Player
                 if (ThemeMeshCache.DebugLogging)
                     Debug.Log(
                         $"[TrackPlayer{HighwayIndex}] NoteTracker+SustainTracker+BeatlineTracker initialized " +
-                        $"(noteCap={NotePool.ObjectCap}, beatlineCap={beatlineCap}, theme={themePreset.Name})");
+                        $"(noteCap={noteCap}, sustainCap={sustainCap}, beatlineCap={beatlineCap}, theme={themePreset.Name})");
             }
 
             SongLength = (float) chart.GetEndTime();
@@ -670,7 +682,7 @@ namespace YARG.Gameplay.Player
 
                 // Skip this frame if BRG tracker is full
                 int need = note.ChildNotes.Count + 1;
-                if (NoteTracker != null && NoteTracker.ActiveCount + need > NotePool.ObjectCap)
+                if (NoteTracker != null && NoteTracker.ActiveCount + need > NoteTracker.Capacity)
                 {
                     break;
                 }
@@ -712,7 +724,7 @@ namespace YARG.Gameplay.Player
                 if (Notes.Count > 0 && beatline.Time > Notes[^1].TimeEnd)
                     return;
 
-                if (BeatlineTracker.ActiveCount >= (BeatlinePool != null ? BeatlinePool.ObjectCap : 100))
+                if (BeatlineTracker != null && BeatlineTracker.ActiveCount >= BeatlineTracker.Capacity)
                     break;
 
                 if (BeatlineTracker.Add(beatline) < 0)

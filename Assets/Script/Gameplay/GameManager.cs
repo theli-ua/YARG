@@ -313,7 +313,7 @@ namespace YARG.Gameplay
             }
 
             // Commit BRG note instance uploads once after every tracker wrote this frame.
-            // Must not depend on HighwayCameraRendering.LateUpdate (can miss → SparseUploader stuck full).
+            // Must not depend on HighwayCameraRendering.LateUpdate (can miss → GPU instance data stale).
             _trackViewManager?.FlushHighwayInstanceUploads();
 
             if (GlobalVariables.VerboseReplays)

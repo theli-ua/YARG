@@ -18,8 +18,10 @@ namespace YARG.Gameplay.Visuals.Instancing
         // CPU-side data — flat arrays, one entry per spawned note
         private NativeArray<NoteData> _notes;
         private NativeArray<NoteSpawnData> _spawnData;
-        private int _activeCount; // tracks how many notes are active (swap-remove keeps
-        internal int ActiveCount => _activeCount; // diagnostic dense)
+        private int _activeCount; // tracks how many notes are active (swap-remove keeps dense)
+        internal int ActiveCount => _activeCount;
+        /// <summary>Fixed per-player CPU capacity (from ctor / HighwayInstancingLimits + HEGS clamp).</summary>
+        internal int Capacity => _capacity;
 
         // Reverse lookup: chart note object → flat index
         private Dictionary<object, int> _noteToIndex = new();
