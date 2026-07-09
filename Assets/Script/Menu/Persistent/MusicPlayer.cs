@@ -52,20 +52,65 @@ namespace YARG.Menu.Persistent
 
         private void OnDisable()
         {
+            StopPlayback();
             StemSettings.ApplySettings = SettingsManager.Settings.ApplyVolumesInMusicLibrary.Value; // reset to default value
+        }
+
+        /// <summary>
+        /// Stop menu preview audio and cancel any in-flight LoadAudio handoff.
+        /// Safe to call when already stopped. Automation uses this before Gameplay load.
+        /// </summary>
+        public void StopPlayback()
+        {
             lock (_lock)
             {
-                _mixer?.Dispose();
-                _mixer = null;
+                // Invalidate in-flight NextSong tasks so they dispose and exit (do not retry).
+                _current = null;
+
+                if (_mixer != null)
+                {
+                    // Detach SongEnd first — Dispose can fire end and would re-enter NextSong.
+                    _mixer.SongEnd -= OnMixerSongEnd;
+                    _mixer.Dispose();
+                    _mixer = null;
+                }
             }
         }
 
+        private void OnMixerSongEnd()
+        {
+            lock (_lock)
+            {
+                if (_mixer != null)
+                {
+                    _mixer.SongEnd -= OnMixerSongEnd;
+                    _mixer.Dispose();
+                    _mixer = null;
+                }
+            }
+
+            // Do not chain while disabled (or while object is being torn down).
+            if (!isActiveAndEnabled)
+                return;
+
+            NextSong();
+        }
+
         private static Task<StemMixer> _current;
+
         public async void NextSong()
         {
+            // Never start or retry loads while inactive — previous code `continue`d the
+            // try-loop on disable and hammered CreateMixer/Dispose (heap corruption risk).
+            if (!isActiveAndEnabled)
+                return;
+
             const int MAX_TRIES = 20;
             for (int tries = 0; tries < MAX_TRIES; tries++)
             {
+                if (!isActiveAndEnabled)
+                    return;
+
                 var entry = SongContainer.GetRandomSong();
                 if (entry == _nowPlaying)
                 {
@@ -76,6 +121,9 @@ namespace YARG.Menu.Persistent
                 Task<StemMixer> task;
                 lock (_lock)
                 {
+                    if (!isActiveAndEnabled)
+                        return;
+
                     const float SPEED = 1f;
                     _current = task = Task.Run(() => entry.LoadAudio(SPEED, SettingsManager.Settings.MusicPlayerVolume.Value, SongStem.Crowd));
                 }
@@ -88,20 +136,21 @@ namespace YARG.Menu.Persistent
 
                 lock (_lock)
                 {
-                    if (_current != task || !gameObject.activeSelf)
+                    // Superseded, cancelled (StopPlayback), or disabled → drop this mixer and stop.
+                    if (_current != task || !isActiveAndEnabled)
                     {
                         mixer.Dispose();
-                        continue;
+                        return;
                     }
 
-                    _mixer?.Dispose();
-                    _mixer = mixer;
-                    _mixer.SongEnd += () =>
+                    if (_mixer != null)
                     {
+                        _mixer.SongEnd -= OnMixerSongEnd;
                         _mixer.Dispose();
-                        _mixer = null;
-                        NextSong();
-                    };
+                    }
+
+                    _mixer = mixer;
+                    _mixer.SongEnd += OnMixerSongEnd;
                     _mixer.Play();
 
                     _songText.text = _nowPlaying.Name;

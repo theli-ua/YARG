@@ -145,13 +145,15 @@ namespace YARG
                 Debug.Log($"[RuntimeAutomation] Using existing song: {GlobalVariables.State.CurrentSong.Name}");
             }
 
-            // Disable menu music player before loading gameplay
-            var musicPlayer = UnityEngine.Object.FindFirstObjectByType<MusicPlayer>();
-            if (musicPlayer != null)
+            // Hard-stop menu music before Gameplay. SetActive(false) alone is not enough:
+            // NextSong used to keep LoadAudio-retrying while disabled (mixer thrash → native abort).
+            foreach (var musicPlayer in UnityEngine.Object.FindObjectsByType<MusicPlayer>(
+                         UnityEngine.FindObjectsInactive.Include, UnityEngine.FindObjectsSortMode.None))
             {
+                musicPlayer.StopPlayback();
                 musicPlayer.gameObject.SetActive(false);
-                Debug.Log("[RuntimeAutomation] Disabled menu music player");
             }
+            Debug.Log("[RuntimeAutomation] Stopped and disabled menu music player(s)");
 
             // Load Gameplay scene through proper scene transition (unloads current, loads Gameplay)
             Debug.Log("[RuntimeAutomation] Loading Gameplay scene...");
