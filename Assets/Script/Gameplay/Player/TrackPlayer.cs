@@ -618,8 +618,9 @@ namespace YARG.Gameplay.Player
             {
                 var note = Notes[NoteIndex];
 
-                // Skip this frame if the pool is full or note is part of a BRE
-                if (!NotePool.CanSpawnAmount(note.ChildNotes.Count + 1))
+                // Skip this frame if BRG tracker is full
+                int need = note.ChildNotes.Count + 1;
+                if (NoteTracker != null && NoteTracker.ActiveCount + need > NotePool.ObjectCap)
                 {
                     break;
                 }
@@ -1093,7 +1094,7 @@ namespace YARG.Gameplay.Player
 
         protected void SpawnNote(TNote note)
         {
-            // BRG instanced path — always active
+            // BRG instanced path only (GameObject note heads removed)
             if (NoteTracker != null)
             {
                 var noteData = CreateNoteData(note);
@@ -1106,19 +1107,6 @@ namespace YARG.Gameplay.Player
                 var sustain = CreateSustainData(note);
                 SustainTracker.Add(note, sustain);
             }
-
-            // GameObject path — only in dual render mode
-            if (HighwayCameraRendering == null || !HighwayCameraRendering.dualRenderMode) return;
-
-            var poolable = NotePool.KeyedTakeWithoutEnabling(note);
-            if (poolable == null)
-            {
-                YargLogger.LogWarning("Attempted to spawn note, but it's at its cap!");
-                return;
-            }
-
-            InitializeSpawnedNote(poolable, note);
-            poolable.EnableFromPool();
         }
 
         /// <summary>Creates NoteData for a spawned note. Override in instrument-specific players.</summary>
