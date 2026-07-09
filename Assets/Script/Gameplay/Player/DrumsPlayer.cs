@@ -1152,5 +1152,26 @@ namespace YARG.Gameplay.Player
                     idx => colors.GetNoteStarPowerColor(idx).ToUnityColor());
             }
         }
+
+        internal override void ResolveInstancedStarPowerColors(
+            byte colorIndex, bool isStarPowerActive, ref NoteData noteData)
+        {
+            if (IsFiveLaneMode)
+            {
+                var colors = Player.ColorProfile.FiveLaneDrums;
+                noteData.color = (isStarPowerActive
+                    ? colors.GetNoteStarPowerColor(colorIndex)
+                    : colors.GetNoteColor(colorIndex)).ToUnityColor();
+                noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
+            }
+            else
+            {
+                var colors = Player.ColorProfile.FourLaneDrums;
+                noteData.color = (isStarPowerActive
+                    ? colors.GetNoteStarPowerColor(colorIndex)
+                    : colors.GetNoteColor(colorIndex)).ToUnityColor();
+                noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
+            }
+        }
     }
 }

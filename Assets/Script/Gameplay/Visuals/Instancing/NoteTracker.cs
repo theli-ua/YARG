@@ -2,11 +2,7 @@ using System;
 using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
-using YARG.Core.Chart;
-using YARG.Core.Engine.Keys;
-using YARG.Core.Game;
 using YARG.Gameplay.Player;
-using YARG.Helpers.Extensions;
 using YARG.Themes;
 
 namespace YARG.Gameplay.Visuals.Instancing
@@ -63,6 +59,10 @@ namespace YARG.Gameplay.Visuals.Instancing
         // Capacity
         private int _capacity;
 
+        // Recycle assignment arrays to avoid per-spawn GC (exact-size rent/return).
+        private const int MaxPooledAssignmentArrays = 64;
+        private readonly List<NoteBatchAssignment[]> _assignmentPool = new(MaxPooledAssignmentArrays);
+
         internal NoteTracker(int capacity, string themeName, int highwayIndex,
             HighwayElementGraphicsSystem graphicsSystem, TrackPlayer trackPlayer,
             GameManager gameManager)
@@ -109,30 +109,37 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (_gameManager?.Players != null)
                 playerHint = Mathf.Max(1, _gameManager.Players.Count);
 
-            // Single exact-size array (no List growth / ToArray double alloc).
+            // Exact-size array from pool (no List/ToArray churn).
             int assignmentCount = CountValidGroups(renderData.Colored)
                 + CountValidGroups(renderData.NoStarPower)
                 + CountValidGroups(renderData.Metal);
-            var assignmentArray = assignmentCount > 0
-                ? new NoteBatchAssignment[assignmentCount]
-                : Array.Empty<NoteBatchAssignment>();
+            var assignmentArray = RentAssignments(assignmentCount);
             int w = 0;
-            w = FillCategoryAssignments(assignmentArray, w, renderData.Colored, NoteDataField.Color,
-                isMetal: false, playerHint, applyEmission: true);
-            w = FillCategoryAssignments(assignmentArray, w, renderData.NoStarPower, NoteDataField.ColorNoStarPower,
-                isMetal: false, playerHint, applyEmission: true);
-            w = FillCategoryAssignments(assignmentArray, w, renderData.Metal, NoteDataField.MetalColor,
-                isMetal: true, playerHint, applyEmission: false);
-            // Batch create can fail → shrink if needed
-            if (w < assignmentArray.Length)
+            if (assignmentCount > 0)
             {
-                if (w == 0)
-                    assignmentArray = Array.Empty<NoteBatchAssignment>();
-                else
+                w = FillCategoryAssignments(assignmentArray, w, renderData.Colored, NoteDataField.Color,
+                    isMetal: false, playerHint, applyEmission: true);
+                w = FillCategoryAssignments(assignmentArray, w, renderData.NoStarPower, NoteDataField.ColorNoStarPower,
+                    isMetal: false, playerHint, applyEmission: true);
+                w = FillCategoryAssignments(assignmentArray, w, renderData.Metal, NoteDataField.MetalColor,
+                    isMetal: true, playerHint, applyEmission: false);
+            }
+
+            // Batch create can fail → rent exact used size
+            if (w != assignmentCount)
+            {
+                ReturnAssignments(assignmentArray);
+                assignmentArray = RentAssignments(w);
+                if (w > 0)
                 {
-                    var trimmed = new NoteBatchAssignment[w];
-                    Array.Copy(assignmentArray, trimmed, w);
-                    assignmentArray = trimmed;
+                    // Re-fill into correctly sized array (rare: only when GetOrCreateBatch fails)
+                    int w2 = 0;
+                    w2 = FillCategoryAssignments(assignmentArray, w2, renderData.Colored, NoteDataField.Color,
+                        isMetal: false, playerHint, applyEmission: true);
+                    w2 = FillCategoryAssignments(assignmentArray, w2, renderData.NoStarPower, NoteDataField.ColorNoStarPower,
+                        isMetal: false, playerHint, applyEmission: true);
+                    w2 = FillCategoryAssignments(assignmentArray, w2, renderData.Metal, NoteDataField.MetalColor,
+                        isMetal: true, playerHint, applyEmission: false);
                 }
             }
             _batchAssignments[index] = assignmentArray;
@@ -144,6 +151,34 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             _activeCount++;
             return index;
+        }
+
+        private NoteBatchAssignment[] RentAssignments(int length)
+        {
+            if (length <= 0)
+                return Array.Empty<NoteBatchAssignment>();
+
+            for (int i = _assignmentPool.Count - 1; i >= 0; i--)
+            {
+                var candidate = _assignmentPool[i];
+                if (candidate.Length == length)
+                {
+                    _assignmentPool.RemoveAt(i);
+                    return candidate;
+                }
+            }
+
+            return new NoteBatchAssignment[length];
+        }
+
+        private void ReturnAssignments(NoteBatchAssignment[] assignments)
+        {
+            if (assignments == null || assignments.Length == 0)
+                return;
+
+            Array.Clear(assignments, 0, assignments.Length);
+            if (_assignmentPool.Count < MaxPooledAssignmentArrays)
+                _assignmentPool.Add(assignments);
         }
 
         private static int CountValidGroups(RenderGroup[] groups)
@@ -225,6 +260,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             object noteObj = _noteObjects[flatIndex];
             _noteToIndex.Remove(noteObj);
 
+            var removedAssignments = _batchAssignments[flatIndex];
+
             // Swap with last active
             int last = _activeCount - 1;
             if (flatIndex != last)
@@ -239,7 +276,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                     _noteToIndex[swappedObj] = flatIndex;
             }
 
-            // Clear last slot
+            // Clear last slot + recycle assignment array
             if (flatIndex != last)
             {
                 _notes[last] = default;
@@ -247,6 +284,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
             _noteObjects[last] = null;
             _batchAssignments[last] = null;
+            ReturnAssignments(removedAssignments);
 
             // NOTE: batch.activeCount is NOT decremented here — it is owned by per-frame
             // uploads. The next UploadToGPU writes a dense [0..count-1] range and sets
@@ -372,13 +410,15 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         public void Reset()
         {
+            for (int i = 0; i < _activeCount; i++)
+                ReturnAssignments(_batchAssignments[i]);
+
             _activeCount = 0;
             _noteToIndex.Clear();
             Array.Clear(_noteObjects, 0, _noteObjects.Length);
             Array.Clear(_batchAssignments, 0, _batchAssignments.Length);
 
-            // Reset batch active counts
-            // (batches are shared across trackers — don't reset them here)
+            // Batches are shared across trackers — don't reset batch.activeCount here.
         }
 
         /// <summary>
@@ -388,6 +428,11 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             if (_disposed) return;
             _disposed = true;
+
+            for (int i = 0; i < _activeCount; i++)
+                ReturnAssignments(_batchAssignments[i]);
+            _activeCount = 0;
+            _assignmentPool.Clear();
 
             if (_notes.IsCreated) _notes.Dispose();
             if (_spawnData.IsCreated) _spawnData.Dispose();
@@ -438,96 +483,15 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal void UpdateStarPowerColors(bool isStarPowerActive)
         {
-            if (_disposed) return;
+            if (_disposed || _trackPlayer == null) return;
 
-            // Handle each instrument type separately to avoid type inference issues
-            switch (_trackPlayer)
+            for (int i = 0; i < _activeCount; i++)
             {
-                case DrumsPlayer drums:
-                {
-                    if (drums.IsFiveLaneMode)
-                    {
-                        var colors = drums.Player.ColorProfile.FiveLaneDrums;
-                        for (int i = 0; i < _activeCount; i++)
-                        {
-                            if (!_spawnData[i].isStarPowerVisible) continue;
-                            var noteData = _notes[i];
-                            int idx = _spawnData[i].colorIndex;
-                            noteData.color = isStarPowerActive
-                                ? colors.GetNoteStarPowerColor(idx).ToUnityColor()
-                                : colors.GetNoteColor(idx).ToUnityColor();
-                            noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
-                            _notes[i] = noteData;
-                        }
-                    }
-                    else
-                    {
-                        var colors = drums.Player.ColorProfile.FourLaneDrums;
-                        for (int i = 0; i < _activeCount; i++)
-                        {
-                            if (!_spawnData[i].isStarPowerVisible) continue;
-                            var noteData = _notes[i];
-                            int idx = _spawnData[i].colorIndex;
-                            noteData.color = isStarPowerActive
-                                ? colors.GetNoteStarPowerColor(idx).ToUnityColor()
-                                : colors.GetNoteColor(idx).ToUnityColor();
-                            noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
-                            _notes[i] = noteData;
-                        }
-                    }
-                    break;
-                }
-                case ProKeysPlayer:
-                {
-                    var colors = _trackPlayer.Player.ColorProfile.ProKeys;
-                    for (int i = 0; i < _activeCount; i++)
-                    {
-                        if (!_spawnData[i].isStarPowerVisible) continue;
-                        var noteData = _notes[i];
-                        int key = _spawnData[i].colorIndex;
-                        bool isWhite = ProKeysUtilities.IsWhiteKey(key % 12);
-                        // ProKeys: color based on white/black key, SP uses StarPower variants
-                        noteData.color = isStarPowerActive
-                            ? (isWhite ? colors.WhiteNoteStarPower : colors.BlackNoteStarPower).ToUnityColor()
-                            : (isWhite ? colors.WhiteNote : colors.BlackNote).ToUnityColor();
-                        noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
-                        _notes[i] = noteData;
-                    }
-                    break;
-                }
-                case FiveLaneKeysPlayer:
-                {
-                    var colors = _trackPlayer.Player.ColorProfile.FiveFretGuitar;
-                    for (int i = 0; i < _activeCount; i++)
-                    {
-                        if (!_spawnData[i].isStarPowerVisible) continue;
-                        var noteData = _notes[i];
-                        int idx = _spawnData[i].colorIndex;
-                        noteData.color = isStarPowerActive
-                            ? colors.GetNoteStarPowerColor(idx).ToUnityColor()
-                            : colors.GetNoteColor(idx).ToUnityColor();
-                        // FiveLaneKeys: metalColor uses constant NoteRef.IsStarPower, don't update
-                        _notes[i] = noteData;
-                    }
-                    break;
-                }
-                case FiveFretGuitarPlayer:
-                default:
-                {
-                    var colors = _trackPlayer.Player.ColorProfile.FiveFretGuitar;
-                    for (int i = 0; i < _activeCount; i++)
-                    {
-                        if (!_spawnData[i].isStarPowerVisible) continue;
-                        var noteData = _notes[i];
-                        int idx = _spawnData[i].colorIndex;
-                        noteData.color = isStarPowerActive
-                            ? colors.GetNoteStarPowerColor(idx).ToUnityColor()
-                            : colors.GetNoteColor(idx).ToUnityColor();
-                        noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
-                        _notes[i] = noteData;
-                    }
-                    break;
-                }
+                if (!_spawnData[i].isStarPowerVisible) continue;
+                var noteData = _notes[i];
+                _trackPlayer.ResolveInstancedStarPowerColors(
+                    _spawnData[i].colorIndex, isStarPowerActive, ref noteData);
+                _notes[i] = noteData;
             }
         }
 

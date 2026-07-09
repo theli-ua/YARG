@@ -1119,5 +1119,16 @@ namespace YARG.Gameplay.Player
             { ProKeysUtilities.HIGH_B,          2 }, // Green
             { ProKeysUtilities.HIGH_C,          3 }, // Orange
         };
+
+        internal override void ResolveInstancedStarPowerColors(
+            byte colorIndex, bool isStarPowerActive, ref NoteData noteData)
+        {
+            var colors = Player.ColorProfile.ProKeys;
+            bool isWhite = ProKeysUtilities.IsWhiteKey(colorIndex % 12);
+            noteData.color = (isStarPowerActive
+                ? (isWhite ? colors.WhiteNoteStarPower : colors.BlackNoteStarPower)
+                : (isWhite ? colors.WhiteNote : colors.BlackNote)).ToUnityColor();
+            noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
+        }
     }
 }

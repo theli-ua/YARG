@@ -1014,5 +1014,15 @@ public override bool ShouldUpdateInputsOnResume => true;
             Blue,
             Orange
         }
+
+        internal override void ResolveInstancedStarPowerColors(
+            byte colorIndex, bool isStarPowerActive, ref NoteData noteData)
+        {
+            var colors = Player.ColorProfile.FiveFretGuitar;
+            noteData.color = (isStarPowerActive
+                ? colors.GetNoteStarPowerColor(colorIndex)
+                : colors.GetNoteColor(colorIndex)).ToUnityColor();
+            // metalColor uses note inherent SP (constant) — leave unchanged
+        }
     }
 }

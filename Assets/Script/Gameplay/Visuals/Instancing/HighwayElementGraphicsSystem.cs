@@ -200,6 +200,11 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// </summary>
         internal void SetHighwayCamera(int cameraInstanceID)
         {
+            if (cameraInstanceID == 0)
+            {
+                Debug.LogError(
+                    "[HEGS] SetHighwayCamera(0) — destroyed/null camera. BRG notes will not draw.");
+            }
             _highwayCameraID = cameraInstanceID;
         }
 
@@ -361,13 +366,23 @@ namespace YARG.Gameplay.Visuals.Instancing
             var newBuffer = new GraphicsBuffer(bufferTarget, newCount, stride);
             newBuffer.name = "HighwayElementGPUBuffer";
 
-            // Copy existing contents (zeros + any committed instance data).
-            int copyInts = Mathf.Min(oldCount, newCount);
-            if (copyInts > 0)
+            // GPU-side copy — avoid managed GetData/SetData hitch on large buffers.
+            try
             {
-                var tmp = new int[copyInts];
-                _gpuBuffer.GetData(tmp);
-                newBuffer.SetData(tmp);
+                Graphics.CopyBuffer(_gpuBuffer, newBuffer);
+            }
+            catch (Exception ex)
+            {
+                // Fallback if sizes/targets reject CopyBuffer
+                int copyInts = Mathf.Min(oldCount, newCount);
+                if (copyInts > 0)
+                {
+                    var tmp = new int[copyInts];
+                    _gpuBuffer.GetData(tmp);
+                    newBuffer.SetData(tmp);
+                }
+                if (DebugLogging)
+                    Debug.LogWarning($"[HEGS] CopyBuffer failed, used SetData fallback: {ex.Message}");
             }
 
             ulong newHeapSize = (ulong)(newSizeBytes - _zeroMatrixSize);
@@ -622,8 +637,15 @@ namespace YARG.Gameplay.Visuals.Instancing
                     return default;
 
                 // BRG culling runs for every Camera — only draw into the highway RT camera.
-                if (_highwayCameraID == 0 ||
-                    cullingContext.viewID.GetInstanceID() != _highwayCameraID)
+                if (_highwayCameraID == 0)
+                {
+                    // Fail-closed: never draw if host forgot SetHighwayCamera.
+                    if (DebugLogging)
+                        Debug.LogError("[HEGS] OnPerformCulling: highway camera ID unset");
+                    return default;
+                }
+
+                if (cullingContext.viewID.GetInstanceID() != _highwayCameraID)
                     return default;
 
                 int totalVisible = 0;

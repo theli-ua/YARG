@@ -14,6 +14,7 @@ using YARG.Gameplay.HUD;
 using YARG.Gameplay.Visuals;
 using YARG.Gameplay.Visuals.Instancing;
 using YARG.Helpers;
+using YARG.Helpers.Extensions;
 using YARG.Playback;
 using YARG.Player;
 using YARG.Settings;
@@ -60,6 +61,9 @@ namespace YARG.Gameplay.Player
 
         // Instanced rendering tracker
         public NoteTracker NoteTracker; // public for benchmark/automation access
+
+        /// <summary>Dedicated SP edge for note colors (must not share scoop flag write order).</summary>
+        protected bool WasStarPowerActiveForNotes;
 
         [SerializeField]
         private Transform _hudLocation;
@@ -158,6 +162,22 @@ namespace YARG.Gameplay.Player
             HitWindowDisplay.SetHitWindowSize();
 
             NoteTracker?.Reset();
+            WasStarPowerActiveForNotes = false;
+        }
+
+        /// <summary>
+        /// Recompute dynamic SP-aware colors for an in-flight instanced note.
+        /// Does not change <see cref="NoteData.colorNoStarPower"/>.
+        /// Default = five-fret guitar profile; instruments override metal/key rules.
+        /// </summary>
+        internal virtual void ResolveInstancedStarPowerColors(
+            byte colorIndex, bool isStarPowerActive, ref NoteData noteData)
+        {
+            var colors = Player.ColorProfile.FiveFretGuitar;
+            noteData.color = (isStarPowerActive
+                ? colors.GetNoteStarPowerColor(colorIndex)
+                : colors.GetNoteColor(colorIndex)).ToUnityColor();
+            noteData.metalColor = colors.GetMetalColor(isStarPowerActive).ToUnityColor();
         }
     }
 
@@ -187,8 +207,6 @@ namespace YARG.Gameplay.Player
         private double _previousStarPowerAmount;
 
         private bool _wasStarPowerActive;
-        /// <summary>Dedicated SP edge for note color updates (must not share scoop flag write order).</summary>
-        private bool _wasStarPowerActiveForNotes;
         private bool _didLowerTrack;
 
         private static bool _hasLoggedNullCamera;
@@ -1261,10 +1279,10 @@ namespace YARG.Gameplay.Player
                 // SP color edge: dedicated flag — UpdateVisuals already consumes _wasStarPowerActive
                 // for camera scoop before we get here.
                 bool spActive = Engine.BaseStats.IsStarPowerActive;
-                if (spActive != _wasStarPowerActiveForNotes)
+                if (spActive != WasStarPowerActiveForNotes)
                 {
                     NoteTracker.UpdateStarPowerColors(spActive);
-                    _wasStarPowerActiveForNotes = spActive;
+                    WasStarPowerActiveForNotes = spActive;
                 }
 
                 // Task 10.2: Per-instrument SP activator pulse update
