@@ -293,15 +293,20 @@ namespace YARG.Gameplay.Player
 
             FinishInitialization();
 
-            // Extract theme meshes for instanced rendering.
-            // Instantiate the prefab once, collect ThemeNote components, pass to ExtractTheme.
-            // Single instantiation: caller creates the instance, ExtractTheme uses it directly.
+            // Extract theme meshes + sustain materials from one temp note prefab instance.
+            // Keep the instance active during GetComponentsInChildren — inactive root has
+            // returned 0 SustainLine components in player builds (count=0 → no BRG strips).
+            // ExtractTheme/ExtractFromPrefab copy Mesh/Material assets only; safe to Destroy after.
             var themeModels = new System.Collections.Generic.Dictionary<ThemeNoteType, ThemeNote>();
             var spModels = new System.Collections.Generic.Dictionary<ThemeNoteType, ThemeNote>();
             var themeName = Player.ThemePreset?.Name ?? "Unknown";
             if (NotePool?.Prefab != null)
             {
                 var instance = GameObject.Instantiate(NotePool.Prefab);
+                instance.name = NotePool.Prefab.name + "_ThemeExtract";
+                // Park off-camera; must stay active for reliable component search.
+                instance.transform.position = new Vector3(0f, -1000f, 0f);
+
                 var allThemeNotes = instance.GetComponentsInChildren<ThemeNote>(true);
                 Debug.Log($"[TrackPlayer{HighwayIndex}] Extraction: found {allThemeNotes.Length} ThemeNote components in prefab '{NotePool.Prefab.name}'");
                 foreach (var themeNote in allThemeNotes)
@@ -311,22 +316,18 @@ namespace YARG.Gameplay.Player
                     else
                         themeModels[themeNote.NoteType] = themeNote;
                 }
-                // NOTE: Do NOT call DestroyImmediate(instance) here — it invalidates
-                // all Unity object references (ThemeNote components) stored in the
-                // dictionaries. The garbage collector will clean up the instance.
+
+                ThemeMeshCache.ExtractTheme(themeName, themeModels, spModels);
+                SustainMaterialCache.ExtractFromPrefab(themeName, instance);
+
+                // Dictionaries only used above; free the temp hierarchy now.
+                themeModels.Clear();
+                spModels.Clear();
+                UnityEngine.Object.Destroy(instance);
             }
             else
             {
                 Debug.LogWarning($"[TrackPlayer{HighwayIndex}] NOTE: NotePool or NotePool.Prefab is null — theme extraction SKIPPED");
-            }
-            ThemeMeshCache.ExtractTheme(themeName, themeModels, spModels);
-            if (NotePool?.Prefab != null)
-            {
-                // Prefab asset may not have awake'd SustainLines — use a temp instance for mats.
-                var sustainHost = GameObject.Instantiate(NotePool.Prefab);
-                sustainHost.SetActive(false);
-                SustainMaterialCache.ExtractFromPrefab(themeName, sustainHost);
-                UnityEngine.Object.Destroy(sustainHost);
             }
 
             if (ThemeMeshCache.DebugLogging)

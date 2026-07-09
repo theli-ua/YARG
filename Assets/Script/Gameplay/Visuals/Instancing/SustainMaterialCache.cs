@@ -24,8 +24,14 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return;
 
             var lines = themePrefab.GetComponentsInChildren<SustainLine>(true);
+            // Fallback: some player/inactive paths return empty; also scan by type on root only.
+            if (lines == null || lines.Length == 0)
+                lines = themePrefab.GetComponentsInChildren<SustainLine>(includeInactive: true);
+
             foreach (var line in lines)
             {
+                if (line == null) continue;
+
                 var mat = line.SharedMaterial;
                 if (mat == null)
                 {
@@ -60,10 +66,50 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             if (!s_cache.ContainsKey((themeName, SustainKind.Normal)))
             {
+                // Last resort: project default sustain mats (note prefab search returned nothing).
+                TryRegisterFallback(themeName, SustainKind.Normal, "Assets/Art/Materials/Gameplay/Notes/Sustain.mat", 0.8f);
+                TryRegisterFallback(themeName, SustainKind.Open, "Assets/Art/Materials/Gameplay/Notes/OpenSustain.mat", 2f);
+                TryRegisterFallback(themeName, SustainKind.Wildcard, "Assets/Art/Materials/Gameplay/Notes/WildcardSustain.mat", 2f);
+            }
+
+            if (!s_cache.ContainsKey((themeName, SustainKind.Normal)))
+            {
                 Debug.LogWarning(
                     $"[SustainMaterialCache] No sustain materials found for theme '{themeName}' " +
-                    $"(SustainLine count={lines.Length})");
+                    $"(SustainLine count={lines?.Length ?? 0})");
             }
+            else if (lines == null || lines.Length == 0)
+            {
+                Debug.LogWarning(
+                    $"[SustainMaterialCache] Theme '{themeName}': used default sustain materials " +
+                    "(no SustainLine on extract host)");
+            }
+        }
+
+        private static void TryRegisterFallback(string themeName, SustainKind kind, string resourceHint, float width)
+        {
+            // Runtime builds cannot load by Assets/ path — use Resources or already-loaded mats.
+            // Prefer Resources.Load by leaf name under Resources (may be null).
+            string leaf = System.IO.Path.GetFileNameWithoutExtension(resourceHint);
+            var mat = Resources.Load<Material>(leaf);
+            if (mat == null)
+            {
+                // Scan loaded materials by name (editor + player if mat already referenced).
+                var all = Resources.FindObjectsOfTypeAll<Material>();
+                for (int i = 0; i < all.Length; i++)
+                {
+                    if (all[i] != null && all[i].name == leaf)
+                    {
+                        mat = all[i];
+                        break;
+                    }
+                }
+            }
+
+            if (mat == null)
+                return;
+
+            s_cache[(themeName, kind)] = new Entry { Material = mat, Width = width };
         }
 
         private static SustainKind Classify(string goName, string matName)
