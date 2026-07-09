@@ -5,11 +5,17 @@ using YARG.Core.Engine.Keys;
 using YARG.Gameplay.Player;
 using YARG.Helpers.Extensions;
 using YARG.Themes;
+using YARG.Gameplay.Visuals.Instancing;
 
 namespace YARG.Gameplay.Visuals
 {
     public sealed class ProKeysNoteElement : NoteElement<ProKeysNote, ProKeysPlayer>
     {
+        /// <summary>BRG sustain extract — uses serialized SustainLine ref on themed pool prefabs.</summary>
+        internal void RegisterSustainMaterials(string themeName)
+        {
+            SustainMaterialCache.RegisterLine(themeName, SustainKind.Normal, _sustainLine);
+        }
         private enum NoteType
         {
             White     = 0,

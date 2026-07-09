@@ -40,14 +40,12 @@ namespace YARG.Gameplay.Visuals.Instancing
                 Vector3.up, Vector3.up, Vector3.up, Vector3.up
             };
 
-            // Old SustainLine set UV.x = remaining world length at the start edge (often 5–20).
-            // Shader samples wave textures along UV.x — relative 0–1 samples a tiny transparent slice.
-            // Approximate absolute UV with a typical highway length at the head (end stays 0).
-            const float kUvLengthApprox = 12f;
+            // UV.x: 1 at start → 0 at end (relative). Absolute-length UV was an experiment and
+            // made wave textures sample transparent — kept simple; length is instance scale.z.
             var uvs = new[]
             {
-                new Vector2(kUvLengthApprox, 1f),
-                new Vector2(kUvLengthApprox, 0f),
+                new Vector2(1f, 1f),
+                new Vector2(1f, 0f),
                 new Vector2(0f, 1f),
                 new Vector2(0f, 0f),
             };

@@ -6,11 +6,19 @@ using YARG.Core.Engine.Guitar;
 using YARG.Gameplay.Player;
 using YARG.Helpers.Extensions;
 using YARG.Themes;
+using YARG.Gameplay.Visuals.Instancing;
 
 namespace YARG.Gameplay.Visuals
 {
     public sealed class FiveFretGuitarNoteElement : NoteElement<GuitarNote, FiveFretGuitarPlayer>
     {
+        /// <summary>BRG sustain extract — uses serialized SustainLine refs on themed pool prefabs.</summary>
+        internal void RegisterSustainMaterials(string themeName)
+        {
+            SustainMaterialCache.RegisterLine(themeName, SustainKind.Normal, _normalSustainLine);
+            SustainMaterialCache.RegisterLine(themeName, SustainKind.Open, _openSustainLine);
+            SustainMaterialCache.RegisterLine(themeName, SustainKind.Wildcard, _wildcardSustainLine);
+        }
         private enum NoteType
         {
             Strum    = 0,

@@ -304,7 +304,8 @@ namespace YARG.Gameplay.Player
             {
                 var instance = GameObject.Instantiate(NotePool.Prefab);
                 instance.name = NotePool.Prefab.name + "_ThemeExtract";
-                // Park off-camera; must stay active for reliable component search.
+                // ThemeManager caches pool prefabs inactive — force active for extract.
+                instance.SetActive(true);
                 instance.transform.position = new Vector3(0f, -1000f, 0f);
 
                 var allThemeNotes = instance.GetComponentsInChildren<ThemeNote>(true);

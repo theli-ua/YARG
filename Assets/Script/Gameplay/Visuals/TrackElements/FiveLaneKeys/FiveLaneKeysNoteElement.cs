@@ -9,11 +9,19 @@ using YARG.Core.Engine.Keys;
 using YARG.Gameplay.Player;
 using YARG.Helpers.Extensions;
 using YARG.Themes;
+using YARG.Gameplay.Visuals.Instancing;
 
 namespace YARG.Gameplay.Visuals
 {
     public sealed class FiveLaneKeysNoteElement : NoteElement<GuitarNote, FiveLaneKeysPlayer>
     {
+        /// <summary>BRG sustain extract — uses serialized SustainLine refs on themed pool prefabs.</summary>
+        internal void RegisterSustainMaterials(string themeName)
+        {
+            SustainMaterialCache.RegisterLine(themeName, SustainKind.Normal, _normalSustainLine);
+            SustainMaterialCache.RegisterLine(themeName, SustainKind.Open, _openSustainLine);
+            SustainMaterialCache.RegisterLine(themeName, SustainKind.Wildcard, _wildcardSustainLine);
+        }
         private const float OPEN_LANE_SCALE_FACTOR = 5f / 6f;
         private Vector3 OPEN_LANE_SCALE = new(OPEN_LANE_SCALE_FACTOR, OPEN_LANE_SCALE_FACTOR, 1);
 
