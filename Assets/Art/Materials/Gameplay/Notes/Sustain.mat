@@ -163,7 +163,7 @@ Material:
     - _Glossiness: 0
     - _GlossyReflections: 0
     - _GlowAmount: 0
-    - _IsActive: 1
+    - _IsActive: 0
     - _Layer_2_Parallax: 0.6
     - _Layer_2_Wavy_Amount: 0.01
     - _Layer_3_Parallax: 1
