@@ -59,9 +59,10 @@ namespace YARG.Gameplay.Visuals.Instancing
         private const int StrideO2W = 48;
         private const int StrideW2O = 48;
         private const int StrideFloat4 = 16;
+        private const int StrideFloat2 = 8; // DOTS float2 (_RandomVector) stride — NOT float4
         private const int StrideFloat = 4;
 
-        // Full note/beatline SoA (with pad for 16-align regions)
+        // Full note/beatline SoA budget (O2W+W2O+color+em+randF+randV2 + align pad)
         private const int BytesPerNoteInstanceBudget = 160;
         private const int BytesPerSustainInstanceBudget = 144;
 
@@ -108,7 +109,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             public NativeArray<Vector4> baseColor;
             public NativeArray<Vector4> emission;
             public NativeArray<float> randomFloat;
-            public NativeArray<Vector4> randomVector;
+            /// <summary>Must match shader DOTS float2 stride (8B), not float4.</summary>
+            public NativeArray<Vector2> randomVector;
             public NativeArray<float> isActive;
             public NativeArray<float> whammy;
 
@@ -477,7 +479,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             else
             {
                 batch.randomFloat = new NativeArray<float>(capacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-                batch.randomVector = new NativeArray<Vector4>(capacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                batch.randomVector = new NativeArray<Vector2>(capacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             }
 
             _batches[key] = batch;
@@ -593,12 +595,13 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         private static int NoteSoABytes(int capacity)
         {
-            // O2W + W2O + color + emission + randomFloat(align16) + randomVector
+            // O2W + W2O + color + emission + randomFloat + randomVector(float2)
+            // Strides must match DOTS LoadDOTSInstancedData_* sizeof (float=4, float2=8, float4=16).
             int n = StrideO2W * capacity + StrideW2O * capacity +
                     StrideFloat4 * capacity + StrideFloat4 * capacity;
             n = Align16(n);
             n += Align16(StrideFloat * capacity);
-            n += StrideFloat4 * capacity;
+            n += Align16(StrideFloat2 * capacity);
             return Align16(n);
         }
 
@@ -622,6 +625,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             baseColor = w2o + StrideW2O * capacity;
             emission = baseColor + StrideFloat4 * capacity;
             randomFloat = Align16(emission + StrideFloat4 * capacity);
+            // float2 SoA: 8 bytes/instance (shader Vector2). Packing as float4 broke instance i>0.
             randomVector = Align16(randomFloat + StrideFloat * capacity);
         }
 
@@ -801,7 +805,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             batch.baseColor[instanceIndex] = ToLinearGpuColor(baseColor);
             batch.emission[instanceIndex] = emissionColor;
             batch.randomFloat[instanceIndex] = randomFloat;
-            batch.randomVector[instanceIndex] = new Vector4(randomVector.x, randomVector.y, 0f, 0f);
+            batch.randomVector[instanceIndex] = randomVector;
             batch.dirty = true;
 
             if (instanceIndex >= batch.activeCount)
