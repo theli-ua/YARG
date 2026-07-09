@@ -1282,6 +1282,7 @@ namespace YARG.Gameplay.Player
                 if (spActive != WasStarPowerActiveForNotes)
                 {
                     NoteTracker.UpdateStarPowerColors(spActive);
+                    NoteTracker.UpdateBatchAssignments(spActive);
                     WasStarPowerActiveForNotes = spActive;
                 }
 

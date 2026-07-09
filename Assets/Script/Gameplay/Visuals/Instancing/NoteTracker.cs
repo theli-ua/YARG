@@ -321,9 +321,67 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         /// <summary>
+        /// Rebuild batch assignments for chart-SP notes when engine SP toggles so theme
+        /// SP mesh variants swap (GetRenderGroups with spActive).
+        /// Non-SP chart notes keep spawn-time groups.
+        /// </summary>
+        internal void UpdateBatchAssignments(bool isStarPowerActive)
+        {
+            if (_disposed || _graphicsSystem == null) return;
+
+            int playerHint = 1;
+            if (_gameManager?.Players != null)
+                playerHint = Mathf.Max(1, _gameManager.Players.Count);
+
+            for (int i = 0; i < _activeCount; i++)
+            {
+                var spawn = _spawnData[i];
+                if (!spawn.isStarPowerVisible)
+                    continue;
+
+                var renderData = ThemeMeshCache.GetRenderGroups(
+                    _themeName, spawn.noteType, isStarPowerActive);
+
+                ReturnAssignments(_batchAssignments[i]);
+
+                int assignmentCount = CountValidGroups(renderData.Colored)
+                    + CountValidGroups(renderData.NoStarPower)
+                    + CountValidGroups(renderData.Metal);
+                var assignmentArray = RentAssignments(assignmentCount);
+                int w = 0;
+                if (assignmentCount > 0)
+                {
+                    w = FillCategoryAssignments(assignmentArray, w, renderData.Colored, NoteDataField.Color,
+                        isMetal: false, playerHint, applyEmission: true);
+                    w = FillCategoryAssignments(assignmentArray, w, renderData.NoStarPower, NoteDataField.ColorNoStarPower,
+                        isMetal: false, playerHint, applyEmission: true);
+                    w = FillCategoryAssignments(assignmentArray, w, renderData.Metal, NoteDataField.MetalColor,
+                        isMetal: true, playerHint, applyEmission: false);
+                }
+
+                if (w != assignmentCount)
+                {
+                    ReturnAssignments(assignmentArray);
+                    assignmentArray = RentAssignments(w);
+                    if (w > 0)
+                    {
+                        int w2 = 0;
+                        w2 = FillCategoryAssignments(assignmentArray, w2, renderData.Colored, NoteDataField.Color,
+                            isMetal: false, playerHint, applyEmission: true);
+                        w2 = FillCategoryAssignments(assignmentArray, w2, renderData.NoStarPower, NoteDataField.ColorNoStarPower,
+                            isMetal: false, playerHint, applyEmission: true);
+                        w2 = FillCategoryAssignments(assignmentArray, w2, renderData.Metal, NoteDataField.MetalColor,
+                            isMetal: true, playerHint, applyEmission: false);
+                    }
+                }
+
+                _batchAssignments[i] = assignmentArray;
+            }
+        }
+
+        /// <summary>
         /// Upload note data to GPU for the current frame.
-        /// Computes Z position and builds world matrices for each active note.
-        /// SP mesh variant switching is deferred (would reassign batches here).
+        /// Shared transform SoA: first category write per slot uploads O2W/W2O.
         /// </summary>
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {

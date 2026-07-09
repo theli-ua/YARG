@@ -42,7 +42,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         //   O2W 48 + W2O 48 + BaseColor 16 + Emission 16 + RandomFloat 4 + RandomVector 16 = 148
         // RandomVector uploaded as float4 (Shader Graph / SetVector); RandomFloat is float.
         // Region starts are 16-aligned; overall alloc rounds up per instance for heap sizing.
-        private const int BytesPerInstance = 160; // 148 payload + pad for alignment headroom
+        private const int BytesPerInstance = 160; // full SoA (transforms + colors) + pad
         private const int StrideO2W = 48;
         private const int StrideW2O = 48;
         private const int StrideFloat4 = 16;
@@ -50,6 +50,11 @@ namespace YARG.Gameplay.Visuals.Instancing
         private const int DefaultBatchCapacity = 256;
         /// <summary>Minimum multiplayer multiplier when sizing new batches.</summary>
         private const int MinPlayerHeadroom = 4;
+
+        // Transform SoA share: Colored/NoSP/Metal batches for same mesh+submesh+source
+        // share one O2W/W2O stream (Raw buffer only — ConstantBuffer windows can't span
+        // distant heap regions safely).
+        private readonly Dictionary<TransformShareKey, SharedTransformRegion> _transformShares = new();
 
         private int _cullFrameCounter;
         // Zero prefix at buffer start (BRG safety). Sized to also satisfy ConstantBuffer
@@ -91,7 +96,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             public BatchMeshID meshID;
             public BatchMaterialID materialID;
             public int submeshIndex;
-            public HeapBlock gpuAllocation;
+            public HeapBlock gpuAllocation; // full SoA, or color-only when sharing transforms
             public int capacity;
             public int activeCount;
             public int objectToWorldOffset;
@@ -109,11 +114,28 @@ namespace YARG.Gameplay.Visuals.Instancing
             public int meshKey;
             public int matKey;
             public int sourceRendererID;
+            /// <summary>Shared O2W/W2O region across material categories; null = private transforms.</summary>
+            public SharedTransformRegion sharedTransforms;
+        }
+
+        /// <summary>
+        /// Shared transform streams for all material-category batches of one mesh/submesh/source.
+        /// </summary>
+        internal class SharedTransformRegion
+        {
+            public TransformShareKey key;
+            public int capacity;
+            public int objectToWorldOffset;
+            public int worldToObjectOffset;
+            public HeapBlock allocation;
+            public int refCount;
+            /// <summary>Dense fill watermark this frame (reset in BeginUploadFrame).</summary>
+            public int transformsFilled;
         }
 
         #endregion
 
-        #region BatchKey
+        #region BatchKey / TransformShareKey
 
         /// <summary>
         /// Unique key for grouping instances into batches.
@@ -142,6 +164,36 @@ namespace YARG.Gameplay.Visuals.Instancing
                     int hash = 17;
                     hash = hash * 31 + meshID;
                     hash = hash * 31 + materialID;
+                    hash = hash * 31 + submeshIndex;
+                    hash = hash * 31 + sourceRendererID;
+                    return hash;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Share key for O2W/W2O only — excludes material so Colored/NoSP/Metal share transforms.
+        /// </summary>
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        internal struct TransformShareKey : IEquatable<TransformShareKey>
+        {
+            public int meshID;
+            public int submeshIndex;
+            public int sourceRendererID;
+
+            public bool Equals(TransformShareKey other) =>
+                meshID == other.meshID &&
+                submeshIndex == other.submeshIndex &&
+                sourceRendererID == other.sourceRendererID;
+
+            public override bool Equals(object obj) => obj is TransformShareKey other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = 17;
+                    hash = hash * 31 + meshID;
                     hash = hash * 31 + submeshIndex;
                     hash = hash * 31 + sourceRendererID;
                     return hash;
@@ -224,6 +276,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
 
             _batches.Clear();
+            _transformShares.Clear();
             _meshIDs.Clear();
             _materialIDs.Clear();
 
@@ -302,20 +355,25 @@ namespace YARG.Gameplay.Visuals.Instancing
             int players = Mathf.Max(MinPlayerHeadroom, Mathf.Max(1, playerCountHint));
             int capacity = capacityPerPlayer * players;
 
-            var block = AllocateHeapBlock(BytesPerInstance * capacity);
-            if (block.Empty)
+            var meshLocal = meshLocalOffset ?? Matrix4x4.identity;
+
+            // Prefer shared transforms (Raw only). ConstantBuffer keeps full private SoA.
+            ElementBatch batch = null;
+            if (!UseConstantBuffer)
             {
-                Debug.LogError(
-                    $"[HighwayElementGraphicsSystem] Heap allocation failed for {capacity} instances " +
-                    $"({BytesPerInstance * capacity} bytes) after growth attempts.");
-                return null;
+                batch = TryCreateBatchWithSharedTransforms(
+                    key, meshID, materialID, submeshIndex, capacity,
+                    meshLocal, emissionAddition, emissionMultiplier,
+                    meshKey, matKey, sourceRendererID);
             }
 
-            var batch = CreateBatchFromBlock(
-                key, meshID, materialID, submeshIndex, block, capacity,
-                meshLocalOffset ?? Matrix4x4.identity,
-                emissionAddition, emissionMultiplier,
-                meshKey, matKey, sourceRendererID);
+            if (batch == null)
+            {
+                batch = CreateBatchFullSoA(
+                    key, meshID, materialID, submeshIndex, capacity,
+                    meshLocal, emissionAddition, emissionMultiplier,
+                    meshKey, matKey, sourceRendererID);
+            }
 
             if (batch == null)
                 return null;
@@ -409,12 +467,11 @@ namespace YARG.Gameplay.Visuals.Instancing
             return true;
         }
 
-        private ElementBatch CreateBatchFromBlock(
+        private ElementBatch CreateBatchFullSoA(
             BatchKey key,
             BatchMeshID meshID,
             BatchMaterialID materialID,
             int submeshIndex,
-            HeapBlock block,
             int capacity,
             Matrix4x4 meshLocalOffset,
             float emissionAddition,
@@ -423,7 +480,15 @@ namespace YARG.Gameplay.Visuals.Instancing
             int matKey,
             int sourceRendererID)
         {
-            // Absolute GPU byte offsets (SparseUploader writes absolute).
+            var block = AllocateHeapBlock(BytesPerInstance * capacity);
+            if (block.Empty)
+            {
+                Debug.LogError(
+                    $"[HighwayElementGraphicsSystem] Heap allocation failed for {capacity} instances " +
+                    $"({BytesPerInstance * capacity} bytes) after growth attempts.");
+                return null;
+            }
+
             ComputeSoAOffsets((int)block.begin, capacity,
                 out int objectToWorldOffset, out int worldToObjectOffset,
                 out int baseColorOffset, out int emissionOffset,
@@ -457,7 +522,114 @@ namespace YARG.Gameplay.Visuals.Instancing
                 emissionMultiplier = emissionMultiplier,
                 meshKey = meshKey,
                 matKey = matKey,
+                sourceRendererID = sourceRendererID,
+                sharedTransforms = null
+            };
+        }
+
+        /// <summary>
+        /// Create batch with shared O2W/W2O + private color streams (Raw path).
+        /// Returns null to fall back to full SoA.
+        /// </summary>
+        private ElementBatch TryCreateBatchWithSharedTransforms(
+            BatchKey key,
+            BatchMeshID meshID,
+            BatchMaterialID materialID,
+            int submeshIndex,
+            int capacity,
+            Matrix4x4 meshLocalOffset,
+            float emissionAddition,
+            float emissionMultiplier,
+            int meshKey,
+            int matKey,
+            int sourceRendererID)
+        {
+            var tkey = new TransformShareKey
+            {
+                meshID = meshKey,
+                submeshIndex = submeshIndex,
                 sourceRendererID = sourceRendererID
+            };
+
+            if (!_transformShares.TryGetValue(tkey, out var share))
+            {
+                int tBytes = Align16(StrideO2W * capacity + StrideW2O * capacity);
+                var tBlock = AllocateHeapBlock(tBytes);
+                if (tBlock.Empty)
+                    return null;
+
+                int o2w = (int)tBlock.begin + _zeroMatrixSize;
+                int w2o = o2w + StrideO2W * capacity;
+                share = new SharedTransformRegion
+                {
+                    key = tkey,
+                    capacity = capacity,
+                    objectToWorldOffset = o2w,
+                    worldToObjectOffset = w2o,
+                    allocation = tBlock,
+                    refCount = 0,
+                    transformsFilled = 0
+                };
+                _transformShares[tkey] = share;
+            }
+            else if (share.capacity < capacity)
+            {
+                // Existing share too small — fall back to private full SoA for this batch.
+                return null;
+            }
+
+            int colorBytes = ComputeColorRegionBytes(capacity);
+            var colorBlock = AllocateHeapBlock(colorBytes);
+            if (colorBlock.Empty)
+                return null;
+
+            ComputeColorOnlyOffsets((int)colorBlock.begin, capacity,
+                out int baseColorOffset, out int emissionOffset,
+                out int randomFloatOffset, out int randomVectorOffset);
+
+            // Window / metadata must cover shared transforms AND private colors.
+            // Pass a synthetic heap span from min offset region to max end.
+            int absMin = Mathf.Min(share.objectToWorldOffset, baseColorOffset) - _zeroMatrixSize;
+            if (absMin < 0) absMin = 0;
+            int absMax = Mathf.Max(
+                share.worldToObjectOffset + StrideW2O * capacity,
+                randomVectorOffset + StrideFloat4 * capacity);
+            int spanLen = absMax - (absMin + _zeroMatrixSize);
+            if (spanLen < colorBytes)
+                spanLen = colorBytes;
+
+            if (!TryAddBatch(
+                    share.objectToWorldOffset, share.worldToObjectOffset,
+                    baseColorOffset, emissionOffset, randomFloatOffset, randomVectorOffset,
+                    absMin, spanLen, out BatchID batchID))
+            {
+                _heapAllocator.Release(colorBlock);
+                return null;
+            }
+
+            share.refCount++;
+            return new ElementBatch
+            {
+                batchID = batchID,
+                meshID = meshID,
+                materialID = materialID,
+                submeshIndex = submeshIndex,
+                gpuAllocation = colorBlock,
+                capacity = Mathf.Min(capacity, share.capacity),
+                activeCount = 0,
+                objectToWorldOffset = share.objectToWorldOffset,
+                worldToObjectOffset = share.worldToObjectOffset,
+                baseColorOffset = baseColorOffset,
+                emissionOffset = emissionOffset,
+                randomFloatOffset = randomFloatOffset,
+                randomVectorOffset = randomVectorOffset,
+                meshLocalOffset = meshLocalOffset,
+                emissionAddition = emissionAddition,
+                emissionMultiplier = emissionMultiplier,
+                meshKey = meshKey,
+                matKey = matKey,
+                sourceRendererID = sourceRendererID,
+                sharedTransforms = share
             };
         }
 
@@ -576,6 +748,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                 _uploadsOpen = true;
                 foreach (var batch in _batches.Values)
                     batch.activeCount = 0;
+                foreach (var share in _transformShares.Values)
+                    share.transformsFilled = 0;
             }
             finally
             {
@@ -770,9 +944,35 @@ namespace YARG.Gameplay.Visuals.Instancing
             randomVectorOffset = Align16(randomFloatOffset + StrideFloat * capacity);
         }
 
+        private void ComputeColorOnlyOffsets(
+            int heapBlockBegin,
+            int capacity,
+            out int baseColorOffset,
+            out int emissionOffset,
+            out int randomFloatOffset,
+            out int randomVectorOffset)
+        {
+            baseColorOffset = heapBlockBegin + _zeroMatrixSize;
+            emissionOffset = baseColorOffset + StrideFloat4 * capacity;
+            randomFloatOffset = Align16(emissionOffset + StrideFloat4 * capacity);
+            randomVectorOffset = Align16(randomFloatOffset + StrideFloat * capacity);
+        }
+
+        private static int ComputeColorRegionBytes(int capacity)
+        {
+            // Mirror ComputeColorOnlyOffsets span from region start (without zero prefix).
+            int baseColor = 0;
+            int emission = baseColor + StrideFloat4 * capacity;
+            int randomFloat = Align16(emission + StrideFloat4 * capacity);
+            int randomVector = Align16(randomFloat + StrideFloat * capacity);
+            int end = randomVector + StrideFloat4 * capacity;
+            return Align16(end);
+        }
+
         /// <summary>
         /// Uploads instance data for a single element in a batch (SoA).
-        /// Grows batch capacity if needed. Uses affine inverse for worldToObject.
+        /// When transforms are shared across material categories, O2W/W2O are written once
+        /// per instance index per frame (first writer wins; dense append keeps indices aligned).
         /// </summary>
         internal void UploadInstance(
             ElementBatch batch,
@@ -798,19 +998,31 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (batch.objectToWorldOffset < _zeroMatrixSize)
                 return;
 
-            int owtOffset = batch.objectToWorldOffset + instanceIndex * StrideO2W;
-            int wtoOffset = batch.worldToObjectOffset + instanceIndex * StrideW2O;
+            // Shared transform SoA: write O2W/W2O only once per slot per frame.
+            bool writeTransforms = true;
+            if (batch.sharedTransforms != null)
+            {
+                var share = batch.sharedTransforms;
+                if (instanceIndex < share.transformsFilled)
+                    writeTransforms = false;
+                else
+                    share.transformsFilled = instanceIndex + 1;
+            }
+
+            if (writeTransforms)
+            {
+                int owtOffset = batch.objectToWorldOffset + instanceIndex * StrideO2W;
+                int wtoOffset = batch.worldToObjectOffset + instanceIndex * StrideW2O;
+                PackedMatrix packedOW = PackedMatrix.FromMatrix4x4(objectToWorld);
+                _sparseUploader.AddUpload(packedOW, owtOffset);
+                PackedMatrix packedWO = PackedMatrix.FromAffineInverse(objectToWorld);
+                _sparseUploader.AddUpload(packedWO, wtoOffset);
+            }
+
             int colorOffset = batch.baseColorOffset + instanceIndex * StrideFloat4;
             int emissionOffset = batch.emissionOffset + instanceIndex * StrideFloat4;
-            // Stride must match shader property size (float / float4).
             int randomFloatOffset = batch.randomFloatOffset + instanceIndex * StrideFloat;
             int randomVectorOffset = batch.randomVectorOffset + instanceIndex * StrideFloat4;
-
-            PackedMatrix packedOW = PackedMatrix.FromMatrix4x4(objectToWorld);
-            _sparseUploader.AddUpload(packedOW, owtOffset);
-
-            PackedMatrix packedWO = PackedMatrix.FromAffineInverse(objectToWorld);
-            _sparseUploader.AddUpload(packedWO, wtoOffset);
 
             _sparseUploader.AddUpload(baseColor, colorOffset);
             _sparseUploader.AddUpload(emissionColor, emissionOffset);
