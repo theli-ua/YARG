@@ -80,6 +80,19 @@ Offset 64+:    HeapAllocator-managed regions
 4. **No batch GC mid-song**
 5. **Highway camera filter** — `viewID.GetInstanceID() == _highwayCameraID`
 6. **No capacity grow after write this frame**
+7. **Color space on upload** — non-HDR `_BaseColor` values must be stored as **linear** in the
+   GPU buffer. In Linear color space, `Material.color` / `Material.SetColor` automatically
+   convert sRGB authoring colors to linear for non-HDR Color properties; BRG `GraphicsBuffer`
+   uploads do not, so conversion is applied at upload time via `ToLinearGpuColor`
+   (`Color.linear`). This matches Entities Graphics `URPMaterialPropertyBaseColorAuthoring`.
+
+   Emission add/mul baking is still performed in gamma space first (same order as
+   `NoteGroup.SetColorWithEmission`). HDR properties (`_EmissionColor` / `_Emission`) are
+   uploaded without conversion because `Material.SetColor` leaves HDR colors as-is.
+
+   **Contract:** all note and sustain `_BaseColor` properties must use Shader Graph ColorMode 0
+   (Default/sRGB), never HDR, so the GameObject and BRG paths share one conversion rule.
+   `CircularTapNote` was corrected from accidental HDR ColorMode 1 to ColorMode 0.
 
 ### SparseUploader
 

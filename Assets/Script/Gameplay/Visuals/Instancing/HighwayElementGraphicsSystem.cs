@@ -979,6 +979,32 @@ namespace YARG.Gameplay.Visuals.Instancing
         }
 
         /// <summary>
+        /// Converts an authoring/UI gamma-space color to linear for BRG GraphicsBuffer upload.
+        /// <para>
+        /// In Linear color space, <see cref="Material.color"/> and <see cref="Material.SetColor"/>
+        /// automatically convert non-HDR Color shader properties from sRGB to linear. Raw
+        /// <see cref="GraphicsBuffer"/> uploads used by BatchRendererGroup do not, so callers must
+        /// convert explicitly. This matches Entities Graphics
+        /// <c>URPMaterialPropertyBaseColorAuthoring</c>, which stores <c>color.linear</c>.
+        /// </para>
+        /// <para>
+        /// Do not use this for HDR properties such as <c>_EmissionColor</c> / <c>_Emission</c>:
+        /// <see cref="Material.SetColor"/> leaves those values unchanged. Emission add/mul baking
+        /// is performed in gamma space first (same order as <c>NoteGroup</c>), then the HDR result
+        /// is uploaded as-is.
+        /// </para>
+        /// <para>
+        /// Contract: note and sustain <c>_BaseColor</c> properties must use Shader Graph ColorMode 0
+        /// (Default/sRGB), never HDR, so the GameObject and BRG paths share one conversion rule.
+        /// </para>
+        /// </summary>
+        private static Vector4 ToLinearGpuColor(Vector4 gamma)
+        {
+            Color linear = ((Color)gamma).linear;
+            return new Vector4(linear.r, linear.g, linear.b, linear.a);
+        }
+
+        /// <summary>
         /// Uploads instance data for a single element in a batch (SoA).
         /// When transforms are shared across material categories, O2W/W2O are written once
         /// per instance index per frame (first writer wins; dense append keeps indices aligned).
@@ -1033,7 +1059,10 @@ namespace YARG.Gameplay.Visuals.Instancing
             int randomFloatOffset = batch.randomFloatOffset + instanceIndex * StrideFloat;
             int randomVectorOffset = batch.randomVectorOffset + instanceIndex * StrideFloat4;
 
-            _sparseUploader.AddUpload(baseColor, colorOffset);
+            // Non-HDR _BaseColor must be linear in the GPU buffer (Material.SetColor does this
+            // automatically; BRG buffer uploads do not). HDR emission is left in gamma bake space
+            // to match Material.SetColor behavior for HDR color properties.
+            _sparseUploader.AddUpload(ToLinearGpuColor(baseColor), colorOffset);
             _sparseUploader.AddUpload(emissionColor, emissionOffset);
             _sparseUploader.AddUpload(randomFloat, randomFloatOffset);
 
@@ -1231,7 +1260,9 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             _sparseUploader.AddUpload(PackedMatrix.FromMatrix4x4(objectToWorld), owtOffset);
             _sparseUploader.AddUpload(PackedMatrix.FromAffineInverse(objectToWorld), wtoOffset);
-            _sparseUploader.AddUpload(baseColor, colorOffset);
+            // Same color-space rules as UploadInstance: linearize non-HDR _BaseColor; leave HDR
+            // _EmissionColor as the gamma-space bake so behavior matches Material.SetColor.
+            _sparseUploader.AddUpload(ToLinearGpuColor(baseColor), colorOffset);
             _sparseUploader.AddUpload(emissionColor, emissionOffset);
             _sparseUploader.AddUpload(isActive, isActiveOffset);
             _sparseUploader.AddUpload(whammyAmount, whammyOffset);
