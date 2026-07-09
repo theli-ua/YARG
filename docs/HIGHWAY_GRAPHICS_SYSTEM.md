@@ -134,7 +134,9 @@ See `docs/RENDERING_PIPELINE.md`. Override material needs:
 | MonoBehaviour LateUpdate (heads) | Per note | Zero for heads |
 | GPU upload | Unity automatic | Dense rewrite, 1 commit/frame |
 
-**Known cost:** 3 material categories × same transforms (Decision 18 deferred — ConstantBuffer window constraints).
+**Transform share (Decision 18):** On **Raw** buffers, Colored/NoSP/Metal batches for the same `(mesh, submesh, sourceRenderer)` share one O2W/W2O SoA. Color/emission/random stay private per material batch. First upload per instance index each frame writes transforms; later categories skip. **ConstantBuffer** platforms keep full private SoA (window cannot safely span distant heap regions).
+
+**SP mesh switch:** chart-SP notes re-query `ThemeMeshCache` on engine SP edge (`UpdateBatchAssignments`).
 
 ## Shader Requirements
 
@@ -156,8 +158,9 @@ See `docs/RENDERING_PIPELINE.md`. Override material needs:
 3. Miss removes head immediately (no lingering miss mesh)
 4. Dense SparseUploader use — fine at current N
 5. No frustum cull of instances (global bounds; camera filter only)
-6. Three category batches triple transform bandwidth
-7. Debug logs gated: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`
+6. ConstantBuffer: no transform share (full SoA per category batch)
+7. Sustain lines / beatlines still GameObjects (separate change)
+8. Debug logs gated: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`
 
 ## Key Files
 
