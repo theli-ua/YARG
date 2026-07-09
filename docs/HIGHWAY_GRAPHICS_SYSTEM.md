@@ -96,7 +96,9 @@ Per-TrackPlayer CPU state. Flat arrays, swap-remove, chart-note reverse lookup.
 
 **Hit/miss:** immediate `TryRemoveByNote` for **all** hits including sustain heads. Line stays GO.
 
-**Spawn Add:** no per-note `List` allocation for assignments.
+**Spawn Add:** pooled exact-size assignment arrays (rent/return on remove).
+
+**SP colors:** `TrackPlayer.ResolveInstancedStarPowerColors` virtual; dedicated `WasStarPowerActiveForNotes` edge (not scoop flag).
 
 ### ThemeMeshCache
 
