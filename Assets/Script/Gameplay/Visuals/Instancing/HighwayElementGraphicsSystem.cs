@@ -1088,6 +1088,21 @@ namespace YARG.Gameplay.Visuals.Instancing
             int players = Mathf.Max(MinPlayerHeadroom, Mathf.Max(1, playerCountHint));
             int capacity = capacityPerPlayer * players;
 
+            // ConstantBuffer window is often 64KB — large ObjectCap (2000×players) will not fit.
+            // Cap sustain SoA so AddBatch succeeds (notes use TryAddBatch which logs; sustains used to fail silent).
+            if (UseConstantBuffer)
+            {
+                int maxWindow = BatchRendererGroup.GetConstantBufferMaxWindowSize();
+                // ~136 B/instance SoA (O2W+W2O+color+em+float+float) + align slack
+                int maxCap = Mathf.Max(64, (maxWindow - 256) / 140);
+                if (capacity > maxCap)
+                {
+                    Debug.LogWarning(
+                        $"[HEGS] Sustain batch capacity {capacity} capped to {maxCap} for ConstantBuffer window {maxWindow}B");
+                    capacity = maxCap;
+                }
+            }
+
             var block = AllocateHeapBlock(BytesPerSustainInstance * capacity);
             if (block.Empty)
             {
@@ -1116,6 +1131,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 bindOffset = (uint)begin;
                 if (bindOffset % (uint)align != 0)
                 {
+                    Debug.LogError($"[HEGS] Sustain CB bindOffset {bindOffset} not aligned to {align}");
                     metadata.Dispose();
                     _heapAllocator.Release(block);
                     return null;
@@ -1126,6 +1142,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                 int maxFrom = bufferBytes - begin;
                 if (needed > maxWindow || needed > maxFrom)
                 {
+                    Debug.LogError(
+                        $"[HEGS] Sustain batch SoA ({needed}B) exceeds CB window ({maxWindow}B) or buffer tail ({maxFrom}B)");
                     metadata.Dispose();
                     _heapAllocator.Release(block);
                     return null;

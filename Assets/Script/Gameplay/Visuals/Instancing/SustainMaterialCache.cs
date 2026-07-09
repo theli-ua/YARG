@@ -36,6 +36,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 if (mat == null)
                     continue;
 
+                // Prefer GameObject name — material assets are often named WildcardSustain even on Normal lines.
                 var kind = Classify(line.gameObject.name, mat.name);
                 s_cache[(themeName, kind)] = new Entry
                 {
@@ -56,14 +57,30 @@ namespace YARG.Gameplay.Visuals.Instancing
                     }
                 }
             }
+
+            if (!s_cache.ContainsKey((themeName, SustainKind.Normal)))
+            {
+                Debug.LogWarning(
+                    $"[SustainMaterialCache] No sustain materials found for theme '{themeName}' " +
+                    $"(SustainLine count={lines.Length})");
+            }
         }
 
         private static SustainKind Classify(string goName, string matName)
         {
-            string n = (goName + " " + matName).ToLowerInvariant();
-            if (n.Contains("open"))
+            // GO name first so "Normal Sustain Line" + WildcardSustain.mat → Normal, not Wildcard.
+            string go = (goName ?? string.Empty).ToLowerInvariant();
+            if (go.Contains("open"))
                 return SustainKind.Open;
-            if (n.Contains("wild"))
+            if (go.Contains("wild"))
+                return SustainKind.Wildcard;
+            if (go.Contains("normal"))
+                return SustainKind.Normal;
+
+            string mat = (matName ?? string.Empty).ToLowerInvariant();
+            if (mat.Contains("open"))
+                return SustainKind.Open;
+            if (mat.Contains("wild"))
                 return SustainKind.Wildcard;
             return SustainKind.Normal;
         }

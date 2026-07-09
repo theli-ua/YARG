@@ -86,6 +86,13 @@ namespace YARG.Gameplay.Visuals.Instancing
                 _batchWildcard = _batchNormal;
                 _widthWildcard = _widthNormal;
             }
+
+            if (_batchNormal == null)
+            {
+                Debug.LogError(
+                    $"[SustainTracker] No Normal sustain batch for theme '{_themeName}' — " +
+                    "strips will not render (material cache miss or HEGS batch create failed)");
+            }
         }
 
         internal int Add(object noteObject, SustainInstanceData data)
@@ -236,9 +243,10 @@ namespace YARG.Gameplay.Visuals.Instancing
 
                 float width = WidthFor(d.kind);
 
-                // Unit mesh: X[-0.5,0.5] Z[0,1] → scale (width,1,visibleLen), pos (baseX, 0, noteZ+startZ)
+                // Unit mesh: X[-0.5,0.5] Z[0,1] → scale (width,1,visibleLen).
+                // Y lift matches prefab SustainLine (0.01) so strip is not z-fought into the track.
                 Matrix4x4 local = Matrix4x4.TRS(
-                    new Vector3(d.baseX, 0f, noteZ + startZ),
+                    new Vector3(d.baseX, 0.02f, noteZ + startZ),
                     Quaternion.identity,
                     new Vector3(width, 1f, visibleLen));
                 Matrix4x4 world = trackLocalToWorld * local;
