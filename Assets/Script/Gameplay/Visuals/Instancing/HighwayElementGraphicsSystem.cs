@@ -78,6 +78,11 @@ namespace YARG.Gameplay.Visuals.Instancing
         private static readonly int EmissionID = Shader.PropertyToID("_Emission");
         private static readonly int RandomFloatID = Shader.PropertyToID("_RandomFloat");
         private static readonly int RandomVectorID = Shader.PropertyToID("_RandomVector");
+        private static readonly int ColorID = Shader.PropertyToID("_Color"); // legacy sustain SG
+        private static readonly int IsActiveID = Shader.PropertyToID("_IsActive");
+        private static readonly int WhammyAmountID = Shader.PropertyToID("_WhammyAmount");
+
+        private const int BytesPerSustainInstance = 144; // O2W+W2O+color+em+isActive+whammy + pad
 
         /// <summary>When true, periodic HEGS diagnostics log every 300 cull frames.</summary>
         internal static bool DebugLogging { get; set; }
@@ -105,6 +110,10 @@ namespace YARG.Gameplay.Visuals.Instancing
             public int emissionOffset;
             public int randomFloatOffset;
             public int randomVectorOffset;
+            /// <summary>-1 if batch has no sustain props.</summary>
+            public int isActiveOffset = -1;
+            /// <summary>-1 if batch has no sustain props.</summary>
+            public int whammyOffset = -1;
             public Matrix4x4 meshLocalOffset;
             /// <summary>Theme emission addition baked into uploaded color (rgb).</summary>
             public float emissionAddition;
@@ -1030,6 +1039,184 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             var rv = new Vector4(randomVector.x, randomVector.y, 0f, 0f);
             _sparseUploader.AddUpload(rv, randomVectorOffset);
+
+            if (instanceIndex >= batch.activeCount)
+                batch.activeCount = instanceIndex + 1;
+        }
+
+        /// <summary>
+        /// Batch for unit-mesh sustains: O2W/W2O + color/emission + _IsActive + _WhammyAmount.
+        /// Keyed by material only (shared unit mesh).
+        /// </summary>
+        internal ElementBatch GetOrCreateSustainBatch(
+            Material material,
+            int capacityPerPlayer = -1,
+            int playerCountHint = 1)
+        {
+            if (_disposed || material == null) return null;
+
+            var mesh = SustainUnitMesh.Mesh;
+            int meshKey = mesh.GetInstanceID();
+            int matKey = material.GetInstanceID();
+
+            if (!_meshIDs.TryGetValue(meshKey, out var meshID))
+            {
+                meshID = _brg.RegisterMesh(mesh);
+                _meshIDs[meshKey] = meshID;
+            }
+
+            if (!_materialIDs.TryGetValue(matKey, out var materialID))
+            {
+                materialID = _brg.RegisterMaterial(material);
+                _materialIDs[matKey] = materialID;
+            }
+
+            var key = new BatchKey
+            {
+                meshID = meshKey,
+                materialID = matKey,
+                submeshIndex = 0,
+                sourceRendererID = 0 // unit mesh — no source renderer
+            };
+
+            if (_batches.TryGetValue(key, out var existing))
+                return existing;
+
+            if (capacityPerPlayer < 0)
+                capacityPerPlayer = DefaultBatchCapacity;
+
+            int players = Mathf.Max(MinPlayerHeadroom, Mathf.Max(1, playerCountHint));
+            int capacity = capacityPerPlayer * players;
+
+            var block = AllocateHeapBlock(BytesPerSustainInstance * capacity);
+            if (block.Empty)
+            {
+                Debug.LogError("[HEGS] Sustain heap allocation failed");
+                return null;
+            }
+
+            int begin = (int)block.begin + _zeroMatrixSize;
+            int o2w = begin;
+            int w2o = o2w + StrideO2W * capacity;
+            int baseColor = w2o + StrideW2O * capacity;
+            int emission = baseColor + StrideFloat4 * capacity;
+            int isActive = Align16(emission + StrideFloat4 * capacity);
+            int whammy = Align16(isActive + StrideFloat * capacity);
+
+            // Metadata: color dual-bound for _BaseColor and legacy _Color
+            var metadata = new NativeArray<MetadataValue>(7, Allocator.Temp);
+            int metaBase = 0;
+            uint bindOffset = 0;
+            uint windowSize = 0;
+
+            if (UseConstantBuffer)
+            {
+                int align = Mathf.Max(16, BatchRendererGroup.GetConstantBufferOffsetAlignment());
+                int maxWindow = BatchRendererGroup.GetConstantBufferMaxWindowSize();
+                bindOffset = (uint)begin;
+                if (bindOffset % (uint)align != 0)
+                {
+                    metadata.Dispose();
+                    _heapAllocator.Release(block);
+                    return null;
+                }
+
+                int needed = (whammy + StrideFloat * capacity) - begin;
+                int bufferBytes = _gpuBuffer.count * _gpuBuffer.stride;
+                int maxFrom = bufferBytes - begin;
+                if (needed > maxWindow || needed > maxFrom)
+                {
+                    metadata.Dispose();
+                    _heapAllocator.Release(block);
+                    return null;
+                }
+
+                windowSize = (uint)Mathf.Min(maxWindow, maxFrom);
+                metaBase = begin;
+            }
+
+            metadata[0] = Meta(ObjectToWorldID, o2w - metaBase);
+            metadata[1] = Meta(WorldToObjectID, w2o - metaBase);
+            metadata[2] = Meta(BaseColorID, baseColor - metaBase);
+            metadata[3] = Meta(ColorID, baseColor - metaBase);
+            metadata[4] = Meta(EmissionColorID, emission - metaBase);
+            metadata[5] = Meta(IsActiveID, isActive - metaBase);
+            metadata[6] = Meta(WhammyAmountID, whammy - metaBase);
+
+            BatchID batchID = UseConstantBuffer
+                ? _brg.AddBatch(metadata, _gpuBufferHandle, bindOffset, windowSize)
+                : _brg.AddBatch(metadata, _gpuBufferHandle);
+            metadata.Dispose();
+
+            var batch = new ElementBatch
+            {
+                batchID = batchID,
+                meshID = meshID,
+                materialID = materialID,
+                submeshIndex = 0,
+                gpuAllocation = block,
+                capacity = capacity,
+                activeCount = 0,
+                objectToWorldOffset = o2w,
+                worldToObjectOffset = w2o,
+                baseColorOffset = baseColor,
+                emissionOffset = emission,
+                randomFloatOffset = 0,
+                randomVectorOffset = 0,
+                isActiveOffset = isActive,
+                whammyOffset = whammy,
+                meshLocalOffset = Matrix4x4.identity,
+                emissionAddition = 0f,
+                emissionMultiplier = 1f,
+                meshKey = meshKey,
+                matKey = matKey,
+                sourceRendererID = 0,
+                sharedTransforms = null
+            };
+
+            _batches[key] = batch;
+            return batch;
+        }
+
+        /// <summary>
+        /// Upload one sustain instance (unit mesh × scale/translate + color + active/whammy).
+        /// </summary>
+        internal void UploadSustainInstance(
+            ElementBatch batch,
+            int instanceIndex,
+            Matrix4x4 objectToWorld,
+            Vector4 baseColor,
+            Vector4 emissionColor,
+            float isActive,
+            float whammyAmount)
+        {
+            if (_disposed || batch == null)
+                return;
+
+            if (instanceIndex >= batch.capacity)
+            {
+                if (DebugLogging)
+                    Debug.LogWarning(
+                        $"[HEGS] SUSTAIN OVERFLOW: {instanceIndex} >= {batch.capacity}");
+                return;
+            }
+
+            if (batch.isActiveOffset < 0 || batch.whammyOffset < 0)
+                return;
+
+            int owtOffset = batch.objectToWorldOffset + instanceIndex * StrideO2W;
+            int wtoOffset = batch.worldToObjectOffset + instanceIndex * StrideW2O;
+            int colorOffset = batch.baseColorOffset + instanceIndex * StrideFloat4;
+            int emissionOffset = batch.emissionOffset + instanceIndex * StrideFloat4;
+            int isActiveOffset = batch.isActiveOffset + instanceIndex * StrideFloat;
+            int whammyOffset = batch.whammyOffset + instanceIndex * StrideFloat;
+
+            _sparseUploader.AddUpload(PackedMatrix.FromMatrix4x4(objectToWorld), owtOffset);
+            _sparseUploader.AddUpload(PackedMatrix.FromAffineInverse(objectToWorld), wtoOffset);
+            _sparseUploader.AddUpload(baseColor, colorOffset);
+            _sparseUploader.AddUpload(emissionColor, emissionOffset);
+            _sparseUploader.AddUpload(isActive, isActiveOffset);
+            _sparseUploader.AddUpload(whammyAmount, whammyOffset);
 
             if (instanceIndex >= batch.activeCount)
                 batch.activeCount = instanceIndex + 1;

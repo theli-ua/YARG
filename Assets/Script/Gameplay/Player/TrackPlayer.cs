@@ -61,6 +61,7 @@ namespace YARG.Gameplay.Player
 
         // Instanced rendering tracker
         public NoteTracker NoteTracker; // public for benchmark/automation access
+        public SustainTracker SustainTracker; // unit-mesh sustain strips
 
         /// <summary>Dedicated SP edge for note colors (must not share scoop flag write order).</summary>
         protected bool WasStarPowerActiveForNotes;
@@ -162,6 +163,7 @@ namespace YARG.Gameplay.Player
             HitWindowDisplay.SetHitWindowSize();
 
             NoteTracker?.Reset();
+            SustainTracker?.Reset();
             WasStarPowerActiveForNotes = false;
         }
 
@@ -318,10 +320,19 @@ namespace YARG.Gameplay.Player
                 Debug.LogWarning($"[TrackPlayer{HighwayIndex}] NOTE: NotePool or NotePool.Prefab is null — theme extraction SKIPPED");
             }
             ThemeMeshCache.ExtractTheme(themeName, themeModels, spModels);
+            if (NotePool?.Prefab != null)
+            {
+                // Prefab asset may not have awake'd SustainLines — use a temp instance for mats.
+                var sustainHost = GameObject.Instantiate(NotePool.Prefab);
+                sustainHost.SetActive(false);
+                SustainMaterialCache.ExtractFromPrefab(themeName, sustainHost);
+                UnityEngine.Object.Destroy(sustainHost);
+            }
+
             if (ThemeMeshCache.DebugLogging)
                 Debug.Log($"[TrackPlayer{HighwayIndex}] ThemeMeshCache: {themeModels.Count} normal + {spModels.Count} SP models for '{themeName}'");
 
-            // Initialize NoteTracker for instanced rendering
+            // Initialize NoteTracker / SustainTracker for instanced rendering
             // Resolve HighwayCameraRendering at runtime if not assigned in inspector
             var hcr = HighwayCameraRendering ?? UnityEngine.Object.FindFirstObjectByType<HighwayCameraRendering>(
                 UnityEngine.FindObjectsInactive.Include);
@@ -341,8 +352,14 @@ namespace YARG.Gameplay.Player
                     graphicsSystem,
                     this,
                     GameManager);
+                SustainTracker = new SustainTracker(
+                    NotePool.ObjectCap,
+                    themePreset.Name,
+                    graphicsSystem,
+                    this,
+                    GameManager);
                 if (ThemeMeshCache.DebugLogging)
-                    Debug.Log($"[TrackPlayer{HighwayIndex}] NoteTracker initialized (capacity={NotePool.ObjectCap}, theme={themePreset.Name})");
+                    Debug.Log($"[TrackPlayer{HighwayIndex}] NoteTracker+SustainTracker initialized (capacity={NotePool.ObjectCap}, theme={themePreset.Name})");
             }
 
             SongLength = (float) chart.GetEndTime();
@@ -358,11 +375,16 @@ namespace YARG.Gameplay.Player
 
             _autoCalibrator?.Dispose();
 
-            // Cleanup NoteTracker for instanced rendering
             if (NoteTracker != null)
             {
                 NoteTracker.Dispose();
                 NoteTracker = null;
+            }
+
+            if (SustainTracker != null)
+            {
+                SustainTracker.Dispose();
+                SustainTracker = null;
             }
 
             base.FinishDestruction();
@@ -1079,6 +1101,12 @@ namespace YARG.Gameplay.Player
                 NoteTracker.Add(noteData, spawnData, note);
             }
 
+            if (SustainTracker != null && NoteIsSustain(note))
+            {
+                var sustain = CreateSustainData(note);
+                SustainTracker.Add(note, sustain);
+            }
+
             // GameObject path — only in dual render mode
             if (HighwayCameraRendering == null || !HighwayCameraRendering.dualRenderMode) return;
 
@@ -1112,6 +1140,26 @@ namespace YARG.Gameplay.Player
                 isStarPowerVisible = false
             };
             return data;
+        }
+
+        /// <summary>Whether this chart note has a sustain body. Guitar/keys/prokeys override.</summary>
+        protected virtual bool NoteIsSustain(TNote note) => note.TickLength > 0;
+
+        /// <summary>Unit-mesh sustain instance data. Override for open/wildcard kind + color.</summary>
+        protected virtual SustainInstanceData CreateSustainData(TNote note)
+        {
+            var noteData = CreateNoteData(note);
+            var spawn = CreateNoteSpawnData(note);
+            return new SustainInstanceData
+            {
+                color = noteData.color,
+                fullLength = (float)note.TimeLength * NoteSpeed,
+                baseX = spawn.baseX,
+                noteHitTime = (float)note.Time,
+                whammy = 0f,
+                kind = SustainKind.Normal,
+                state = SustainHitState.Waiting
+            };
         }
 
         protected abstract void InitializeSpawnedNote(IPoolable poolable, TNote note);
@@ -1268,6 +1316,11 @@ namespace YARG.Gameplay.Player
             // Default: no-op. Override in DrumsPlayer for SP-activator pulse.
         }
 
+        /// <summary>Push whammy factor into hitting sustains. Override for guitar/keys.</summary>
+        protected virtual void UpdateSustainWhammy()
+        {
+        }
+
         public override void GameplayUpdate()
         {
             base.GameplayUpdate();
@@ -1294,6 +1347,14 @@ namespace YARG.Gameplay.Player
                 {
                     NoteTracker.UploadToGPU(transform.localToWorldMatrix);
                 }
+            }
+
+            if (SustainTracker != null)
+            {
+                SustainTracker.RemoveExpired();
+                UpdateSustainWhammy();
+                if (TrackCamera != null)
+                    SustainTracker.UploadToGPU(transform.localToWorldMatrix);
             }
 
             if (LastHighScore != null && !_newHighScoreShown && Score > LastHighScore)

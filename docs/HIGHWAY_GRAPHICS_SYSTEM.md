@@ -3,8 +3,12 @@
 Instanced highway note heads via Unity `BatchRendererGroup` (BRG) + DOTS instancing.
 **Mental model:** highway particle/instancer with EGS-inspired GPU buffer layout — not a mini Entities Graphics clone.
 
-Replaces per-note GameObject/MeshRenderer note heads. Sustains and beatlines remain GameObjects (deferred).  
-**Performance claim scope:** note-head path only — sustains/beatlines still contribute to `CreateSharedRendererScene`.
+Replaces per-note GameObject/MeshRenderer note heads **and** sustain strips.
+Beatlines remain GameObjects (deferred).
+
+**Sustains (unit mesh):** one static strip mesh (X∈[-0.5,0.5], Z∈[0,1]). Per instance:
+`T(baseX, 0, noteZ+startZ) × S(width, 1, visibleLength)`. No mesh rebuild.
+Hitting clips `startZ` so start sits on strike line. State → color / `_IsActive` / `_WhammyAmount`.
 
 Authoritative design: `openspec/changes/custom-instanced-note-rendering/design.md`.
 
@@ -159,8 +163,9 @@ See `docs/RENDERING_PIPELINE.md`. Override material needs:
 4. Dense SparseUploader use — fine at current N
 5. No frustum cull of instances (global bounds; camera filter only)
 6. ConstantBuffer: no transform share (full SoA per category batch)
-7. Sustain lines / beatlines still GameObjects (separate change)
-8. Debug logs gated: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`
+7. Beatlines still GameObjects
+8. Sustain UV is unit-relative (not absolute length in UV.x like old SustainLine) — whammy shader may need tune
+9. Debug logs gated: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`
 
 ## Key Files
 

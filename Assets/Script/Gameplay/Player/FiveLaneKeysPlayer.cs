@@ -537,6 +537,12 @@ public override bool ShouldUpdateInputsOnResume => true;
             // Remove BRG head immediately on hit (including sustains — line stays as GameObject).
             NoteTracker?.TryRemoveByNote(note);
 
+            if (note.IsSustain)
+            {
+                var c = CreateNoteData(note).color;
+                SustainTracker?.SetState(note, SustainHitState.Hitting, c);
+            }
+
             (NotePool.GetByKey(note) as FiveLaneKeysNoteElement)?.HitNote();
 
             if (!IsNormalNote(note))
@@ -555,6 +561,10 @@ public override bool ShouldUpdateInputsOnResume => true;
 
             // Remove from instanced renderer immediately when missed
             NoteTracker?.TryRemoveByNote(chordParent);
+            if (chordParent.IsSustain)
+                SustainTracker?.SetState(chordParent, SustainHitState.Missed, default);
+            else
+                SustainTracker?.TryRemoveByNote(chordParent);
 
             (NotePool.GetByKey(chordParent) as FiveLaneKeysNoteElement)?.MissNote();
         }
@@ -599,6 +609,7 @@ public override bool ShouldUpdateInputsOnResume => true;
 
         private void OnSustainEnd(GuitarNote note, double timeEnded, bool finished)
         {
+            SustainTracker?.TryRemoveByNote(note);
             (NotePool.GetByKey(note) as FiveLaneKeysNoteElement)?.SustainEnd(finished);
 
             // Mute the stem if you let go of the sustain too early.
@@ -897,6 +908,23 @@ public override bool ShouldUpdateInputsOnResume => true;
         private static float ComputeElementX(float index, int subdivisions)
         {
             return TrackPlayer.TRACK_WIDTH / subdivisions * (index + 1f) - TrackPlayer.TRACK_WIDTH / 2f - 1f / subdivisions;
+        }
+
+        protected override void UpdateSustainWhammy()
+        {
+            SustainTracker?.SetWhammy(WhammyFactor);
+        }
+
+        protected override SustainInstanceData CreateSustainData(GuitarNote note)
+        {
+            var data = base.CreateSustainData(note);
+            if (note.Fret == (int)FiveFretGuitarFret.Open)
+                data.kind = SustainKind.Open;
+            else if (note.Fret == (int)FiveFretGuitarFret.Wildcard)
+                data.kind = SustainKind.Wildcard;
+            else
+                data.kind = SustainKind.Normal;
+            return data;
         }
 
         protected override NoteData CreateNoteData(GuitarNote note)

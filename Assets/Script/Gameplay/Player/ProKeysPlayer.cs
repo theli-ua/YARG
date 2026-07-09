@@ -287,6 +287,12 @@ namespace YARG.Gameplay.Player
             // Remove BRG head immediately on hit (including sustains — line stays as GameObject).
             NoteTracker?.TryRemoveByNote(note);
 
+            if (note.IsSustain)
+            {
+                var c = CreateNoteData(note).color;
+                SustainTracker?.SetState(note, SustainHitState.Hitting, c);
+            }
+
             (NotePool.GetByKey(note) as ProKeysNoteElement)?.HitNote();
             _keysArray.PlayHitAnimation(note.Key);
 
@@ -301,6 +307,10 @@ namespace YARG.Gameplay.Player
 
             // Remove from instanced renderer immediately when missed
             NoteTracker?.TryRemoveByNote(chordParent);
+            if (chordParent.IsSustain)
+                SustainTracker?.SetState(chordParent, SustainHitState.Missed, default);
+            else
+                SustainTracker?.TryRemoveByNote(chordParent);
 
             (NotePool.GetByKey(chordParent) as ProKeysNoteElement)?.MissNote();
         }
@@ -319,6 +329,7 @@ namespace YARG.Gameplay.Player
 
         private void OnSustainEnd(ProKeysNote parent, double timeEnded, bool finished)
         {
+            SustainTracker?.TryRemoveByNote(parent);
             (NotePool.GetByKey(parent) as ProKeysNoteElement)?.SustainEnd(finished);
 
             // Mute the stem if you let go of the sustain too early.

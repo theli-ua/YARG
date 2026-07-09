@@ -24,6 +24,11 @@ namespace YARG.Gameplay.Visuals
         private Material _sustainMaterial;
         [SerializeField]
         private float _sustainWidth = 0.1f;
+
+        /// <summary>Theme material (for BRG extract). Not the runtime instance.</summary>
+        public Material SharedMaterial => _sustainMaterial;
+        /// <summary>Strip width in local X (for BRG unit-mesh scale).</summary>
+        public float Width => _sustainWidth;
         [SerializeField]
         private int _subdivisions = 1; // Number of subdivisions on start/end edges
         [SerializeField]

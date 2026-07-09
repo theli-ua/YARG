@@ -516,6 +516,12 @@ namespace YARG.Gameplay.Player
                 // Remove BRG head immediately on hit (including sustains — line stays as GameObject).
                 NoteTracker?.TryRemoveByNote(note);
 
+                if (note.IsSustain)
+                {
+                    var c = CreateNoteData(note).color;
+                    SustainTracker?.SetState(note, SustainHitState.Hitting, c);
+                }
+
                 (NotePool.GetByKey(note) as FiveFretGuitarNoteElement)?.HitNote();
 
                 if (note.Fret != (int) FiveFretGuitarFret.Open && note.Fret != (int) FiveFretGuitarFret.Wildcard)
@@ -537,6 +543,10 @@ namespace YARG.Gameplay.Player
             {
                 // Remove from instanced renderer immediately when missed
                 NoteTracker?.TryRemoveByNote(note);
+                if (note.IsSustain)
+                    SustainTracker?.SetState(note, SustainHitState.Missed, default);
+                else
+                    SustainTracker?.TryRemoveByNote(note);
 
                 (NotePool.GetByKey(note) as FiveFretGuitarNoteElement)?.MissNote();
             }
@@ -642,6 +652,7 @@ namespace YARG.Gameplay.Player
                     continue;
                 }
 
+                SustainTracker?.TryRemoveByNote(note);
                 (NotePool.GetByKey(note) as FiveFretGuitarNoteElement)?.SustainEnd(finished);
 
                 if (note.Fret != (int) FiveFretGuitarFret.Open && note.Fret != (int) FiveFretGuitarFret.Wildcard)
@@ -927,6 +938,23 @@ namespace YARG.Gameplay.Player
                     note.IsSustain,
                     note.Fret == (int)FiveFretGuitarFret.Open)
             };
+        }
+
+        protected override void UpdateSustainWhammy()
+        {
+            SustainTracker?.SetWhammy(WhammyFactor);
+        }
+
+        protected override SustainInstanceData CreateSustainData(GuitarNote note)
+        {
+            var data = base.CreateSustainData(note);
+            if (note.Fret == (int)FiveFretGuitarFret.Open)
+                data.kind = SustainKind.Open;
+            else if (note.Fret == (int)FiveFretGuitarFret.Wildcard)
+                data.kind = SustainKind.Wildcard;
+            else
+                data.kind = SustainKind.Normal;
+            return data;
         }
 
         protected override NoteSpawnData CreateNoteSpawnData(GuitarNote note)
