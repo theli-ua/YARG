@@ -28,9 +28,11 @@ namespace YARG.Gameplay.Visuals.Instancing
         /// <summary>Which color field of NoteData to use for upload.</summary>
         internal enum NoteDataField
         {
-            Color,
-            ColorNoStarPower,
-            MetalColor
+            Color = 0,
+            ColorNoStarPower = 1,
+            MetalColor = 2,
+            /// <summary>Fixed white — non-colored theme mesh parts (shells/tops).</summary>
+            Static = 3
         }
 
         /// <summary>Single batch assignment for a note instance in one render group.</summary>
@@ -112,7 +114,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             // Exact-size array from pool (no List/ToArray churn).
             int assignmentCount = CountValidGroups(renderData.Colored)
                 + CountValidGroups(renderData.NoStarPower)
-                + CountValidGroups(renderData.Metal);
+                + CountValidGroups(renderData.Metal)
+                + CountValidGroups(renderData.Static);
             var assignmentArray = RentAssignments(assignmentCount);
             int w = 0;
             if (assignmentCount > 0)
@@ -123,6 +126,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                     isMetal: false, playerHint, applyEmission: true);
                 w = FillCategoryAssignments(assignmentArray, w, renderData.Metal, NoteDataField.MetalColor,
                     isMetal: true, playerHint, applyEmission: false);
+                w = FillCategoryAssignments(assignmentArray, w, renderData.Static, NoteDataField.Static,
+                    isMetal: false, playerHint, applyEmission: false);
             }
 
             // Batch create can fail → rent exact used size
@@ -140,6 +145,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                         isMetal: false, playerHint, applyEmission: true);
                     w2 = FillCategoryAssignments(assignmentArray, w2, renderData.Metal, NoteDataField.MetalColor,
                         isMetal: true, playerHint, applyEmission: false);
+                    w2 = FillCategoryAssignments(assignmentArray, w2, renderData.Static, NoteDataField.Static,
+                        isMetal: false, playerHint, applyEmission: false);
                 }
             }
             _batchAssignments[index] = assignmentArray;
@@ -345,8 +352,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                 ReturnAssignments(_batchAssignments[i]);
 
                 int assignmentCount = CountValidGroups(renderData.Colored)
-                    + CountValidGroups(renderData.NoStarPower)
-                    + CountValidGroups(renderData.Metal);
+                + CountValidGroups(renderData.NoStarPower)
+                + CountValidGroups(renderData.Metal)
+                + CountValidGroups(renderData.Static);
                 var assignmentArray = RentAssignments(assignmentCount);
                 int w = 0;
                 if (assignmentCount > 0)
@@ -356,7 +364,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                     w = FillCategoryAssignments(assignmentArray, w, renderData.NoStarPower, NoteDataField.ColorNoStarPower,
                         isMetal: false, playerHint, applyEmission: true);
                     w = FillCategoryAssignments(assignmentArray, w, renderData.Metal, NoteDataField.MetalColor,
-                        isMetal: true, playerHint, applyEmission: false);
+                    isMetal: true, playerHint, applyEmission: false);
+                w = FillCategoryAssignments(assignmentArray, w, renderData.Static, NoteDataField.Static,
+                    isMetal: false, playerHint, applyEmission: false);
                 }
 
                 if (w != assignmentCount)
@@ -371,7 +381,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                         w2 = FillCategoryAssignments(assignmentArray, w2, renderData.NoStarPower, NoteDataField.ColorNoStarPower,
                             isMetal: false, playerHint, applyEmission: true);
                         w2 = FillCategoryAssignments(assignmentArray, w2, renderData.Metal, NoteDataField.MetalColor,
-                            isMetal: true, playerHint, applyEmission: false);
+                        isMetal: true, playerHint, applyEmission: false);
+                    w2 = FillCategoryAssignments(assignmentArray, w2, renderData.Static, NoteDataField.Static,
+                        isMetal: false, playerHint, applyEmission: false);
                     }
                 }
 
@@ -427,15 +439,22 @@ namespace YARG.Gameplay.Visuals.Instancing
                         NoteDataField.Color => data.color,
                         NoteDataField.ColorNoStarPower => data.colorNoStarPower,
                         NoteDataField.MetalColor => data.metalColor,
+                        NoteDataField.Static => Vector4.one,
                         _ => data.color
                     };
 
                     // Match NoteGroup.SetColorWithEmission / SetMetalColor:
                     // colored: albedo = color + addition, emission = albedo * multiplier
                     // metal:   albedo = emission = metalColor
+                    // static:  material default look (white instance color, no emission bake)
                     Vector4 baseColor;
                     Vector4 emission;
-                    if (assignment.IsMetal)
+                    if (assignment.ColorField == NoteDataField.Static)
+                    {
+                        baseColor = color;
+                        emission = Vector4.zero;
+                    }
+                    else if (assignment.IsMetal)
                     {
                         baseColor = color;
                         emission = color;
