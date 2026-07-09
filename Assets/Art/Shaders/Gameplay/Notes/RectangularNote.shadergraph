@@ -1482,8 +1482,8 @@
     "m_CustomSlotLabel": "",
     "m_DismissedVersion": 0,
     "m_Precision": 0,
-    "overrideHLSLDeclaration": false,
-    "hlslDeclarationOverride": 0,
+    "overrideHLSLDeclaration": true,
+    "hlslDeclarationOverride": 3,
     "m_Hidden": false,
     "m_PerRendererData": false,
     "m_customAttributes": [],
@@ -1541,8 +1541,8 @@
     "m_ObjectId": "14b2593755234e47860f7792c3fc00e4",
     "m_Title": "Use time scroll to get UVs",
     "m_Position": {
-        "x": -1324.999755859375,
-        "y": -556.0
+        "x": -1325.0,
+        "y": -555.9998779296875
     }
 }
 
@@ -2763,7 +2763,7 @@
     "m_ObjectId": "45bd1f8f3407411ca985a8e77f740936",
     "m_Title": "Base Color",
     "m_Position": {
-        "x": -14.0,
+        "x": -13.999999046325684,
         "y": 467.0000305175781
     }
 }
@@ -2775,7 +2775,7 @@
     "m_Title": "Calculate offset",
     "m_Position": {
         "x": -2406.0,
-        "y": -216.00009155273438
+        "y": -215.99989318847657
     }
 }
 
@@ -3659,8 +3659,8 @@
     "m_CustomSlotLabel": "",
     "m_DismissedVersion": 0,
     "m_Precision": 0,
-    "overrideHLSLDeclaration": false,
-    "hlslDeclarationOverride": 0,
+    "overrideHLSLDeclaration": true,
+    "hlslDeclarationOverride": 3,
     "m_Hidden": false,
     "m_PerRendererData": false,
     "m_customAttributes": [],
@@ -6871,7 +6871,7 @@
     "m_ObjectId": "c9a91bce35ba4940aa93952e6b0e96b3",
     "m_Title": "Noise Texture",
     "m_Position": {
-        "x": 29.00001335144043,
+        "x": 29.0,
         "y": -515.0
     }
 }
