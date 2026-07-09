@@ -706,14 +706,16 @@ namespace YARG.Gameplay.Visuals.Instancing
             // Metadata: Raw indexes from buffer start; ConstantBuffer from bindOffset (EGS pattern).
             int metaBase = UseConstantBuffer ? (int)bindOffset : 0;
 
-            var metadata = new NativeArray<MetadataValue>(7, Allocator.Temp);
+            // Dual-bind _BaseColor and _Color so both note SGs and Beatline.mat resolve instance color.
+            var metadata = new NativeArray<MetadataValue>(8, Allocator.Temp);
             metadata[0] = Meta(ObjectToWorldID, objectToWorldOffset - metaBase);
             metadata[1] = Meta(WorldToObjectID, worldToObjectOffset - metaBase);
             metadata[2] = Meta(BaseColorID, baseColorOffset - metaBase);
-            metadata[3] = Meta(EmissionColorID, emissionOffset - metaBase);
-            metadata[4] = Meta(EmissionID, emissionOffset - metaBase);
-            metadata[5] = Meta(RandomFloatID, randomFloatOffset - metaBase);
-            metadata[6] = Meta(RandomVectorID, randomVectorOffset - metaBase);
+            metadata[3] = Meta(ColorID, baseColorOffset - metaBase);
+            metadata[4] = Meta(EmissionColorID, emissionOffset - metaBase);
+            metadata[5] = Meta(EmissionID, emissionOffset - metaBase);
+            metadata[6] = Meta(RandomFloatID, randomFloatOffset - metaBase);
+            metadata[7] = Meta(RandomVectorID, randomVectorOffset - metaBase);
 
             batchID = UseConstantBuffer
                 ? _brg.AddBatch(metadata, _gpuBufferHandle, bindOffset, windowSize)

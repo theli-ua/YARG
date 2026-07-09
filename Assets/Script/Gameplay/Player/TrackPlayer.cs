@@ -59,9 +59,10 @@ namespace YARG.Gameplay.Player
         [SerializeField]
         protected HitWindowDisplay HitWindowDisplay;
 
-        // Instanced rendering tracker
+        // Instanced rendering trackers
         public NoteTracker NoteTracker; // public for benchmark/automation access
         public SustainTracker SustainTracker; // unit-mesh sustain strips
+        public BeatlineTracker BeatlineTracker; // BRG beatlines (replaces BeatlinePool GOs)
 
         /// <summary>Dedicated SP edge for note colors (must not share scoop flag write order).</summary>
         protected bool WasStarPowerActiveForNotes;
@@ -158,7 +159,9 @@ namespace YARG.Gameplay.Player
 
             NotePool.ReturnAllObjects();
             LanePool.ReturnAllObjects();
-            BeatlinePool.ReturnAllObjects();
+            // Beatlines are BRG-instanced; keep pool return as a no-op safety if any GO leaked.
+            BeatlinePool?.ReturnAllObjects();
+            BeatlineTracker?.Reset();
 
             HitWindowDisplay.SetHitWindowSize();
 
@@ -360,8 +363,32 @@ namespace YARG.Gameplay.Player
                     graphicsSystem,
                     this,
                     GameManager);
+
+                // Beatlines: extract mesh/mat from legacy pool prefab (single global asset).
+                int beatlineCap = BeatlinePool != null ? BeatlinePool.ObjectCap : 100;
+                if (BeatlinePool != null &&
+                    YARG.Gameplay.Visuals.Instancing.BeatlineTracker.TryExtractFromPrefab(
+                        BeatlinePool.Prefab, out var blMesh, out var blMat))
+                {
+                    // Field name matches type name — qualify type to avoid null-field static access.
+                    BeatlineTracker = new YARG.Gameplay.Visuals.Instancing.BeatlineTracker(
+                        beatlineCap,
+                        blMesh,
+                        blMat,
+                        graphicsSystem,
+                        this,
+                        GameManager);
+                }
+                else
+                {
+                    Debug.LogWarning(
+                        $"[TrackPlayer{HighwayIndex}] BeatlineTracker init failed — pool/prefab mesh missing");
+                }
+
                 if (ThemeMeshCache.DebugLogging)
-                    Debug.Log($"[TrackPlayer{HighwayIndex}] NoteTracker+SustainTracker initialized (capacity={NotePool.ObjectCap}, theme={themePreset.Name})");
+                    Debug.Log(
+                        $"[TrackPlayer{HighwayIndex}] NoteTracker+SustainTracker+BeatlineTracker initialized " +
+                        $"(noteCap={NotePool.ObjectCap}, beatlineCap={beatlineCap}, theme={themePreset.Name})");
             }
 
             SongLength = (float) chart.GetEndTime();
@@ -387,6 +414,12 @@ namespace YARG.Gameplay.Player
             {
                 SustainTracker.Dispose();
                 SustainTracker = null;
+            }
+
+            if (BeatlineTracker != null)
+            {
+                BeatlineTracker.Dispose();
+                BeatlineTracker = null;
             }
 
             base.FinishDestruction();
@@ -668,36 +701,22 @@ namespace YARG.Gameplay.Player
 
         private void UpdateBeatlines(double time)
         {
+            if (BeatlineTracker == null)
+                return;
+
             while (BeatlineIndex < Beatlines.Count && Beatlines[BeatlineIndex].Time <= time + SpawnTimeOffset)
             {
-                if (BeatlineIndex + 1 < Beatlines.Count && Beatlines[BeatlineIndex + 1].Time <= time + SpawnTimeOffset)
-                {
-                    BeatlineIndex++;
-                    continue;
-                }
-
                 var beatline = Beatlines[BeatlineIndex];
 
+                // Stop spawning past the last note of the chart (same as legacy GO path).
                 if (Notes.Count > 0 && beatline.Time > Notes[^1].TimeEnd)
-                {
                     return;
-                }
 
-                // Skip this frame if the pool is full
-                if (!BeatlinePool.CanSpawnAmount(1))
-                {
+                if (BeatlineTracker.ActiveCount >= (BeatlinePool != null ? BeatlinePool.ObjectCap : 100))
                     break;
-                }
 
-                var poolable = BeatlinePool.TakeWithoutEnabling();
-                if (poolable == null)
-                {
-                    YargLogger.LogWarning("Attempted to spawn beatline, but it's at its cap!");
+                if (BeatlineTracker.Add(beatline) < 0)
                     break;
-                }
-
-                ((BeatlineElement) poolable).BeatlineRef = beatline;
-                poolable.EnableFromPool();
 
                 BeatlineIndex++;
             }
@@ -1360,6 +1379,13 @@ namespace YARG.Gameplay.Player
                 UpdateSustainWhammy();
                 if (TrackCamera != null)
                     SustainTracker.UploadToGPU(transform.localToWorldMatrix);
+            }
+
+            if (BeatlineTracker != null)
+            {
+                BeatlineTracker.RemoveExpired();
+                if (TrackCamera != null)
+                    BeatlineTracker.UploadToGPU(transform.localToWorldMatrix);
             }
 
             if (LastHighScore != null && !_newHighScoreShown && Score > LastHighScore)

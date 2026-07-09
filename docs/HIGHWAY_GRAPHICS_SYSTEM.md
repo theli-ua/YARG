@@ -1,10 +1,9 @@
 # Highway Graphics System (Instanced Note Rendering)
 
-Instanced highway note heads via Unity `BatchRendererGroup` (BRG) + DOTS instancing.
+Instanced highway note heads, sustain strips, and beatlines via Unity `BatchRendererGroup` (BRG) + DOTS instancing.
 **Mental model:** highway particle/instancer with EGS-inspired GPU buffer layout — not a mini Entities Graphics clone.
 
-Replaces per-note GameObject/MeshRenderer note heads **and** sustain strips.
-Beatlines remain GameObjects (deferred).
+Replaces per-note GameObject/MeshRenderer note heads, sustain strips, and beatlines.
 
 **Sustains (unit mesh):** one static strip mesh (X∈[-0.5,0.5], Z∈[0,1]). Per instance:
 `T(baseX, 0, noteZ+startZ) × S(width, 1, visibleLength)`. No mesh rebuild.
@@ -21,7 +20,9 @@ GameManager.Update
             ├── NoteTracker.RemoveExpired()
             ├── SP edge → UpdateStarPowerColors (dedicated flag)
             ├── drums SP-activator pulse
-            └── NoteTracker.UploadToGPU     ← queue ops only
+            ├── NoteTracker.UploadToGPU     ← queue ops only
+            ├── SustainTracker.RemoveExpired / UploadToGPU
+            └── BeatlineTracker.RemoveExpired / UploadToGPU
     FlushHighwayInstanceUploads()          ← EndUploadFrame → Commit
     HighwayCameraRendering.LateUpdate      ← EndUploadFrame backup only
 
@@ -170,15 +171,26 @@ See `docs/RENDERING_PIPELINE.md`. Override material needs:
 
 ## Known Limitations
 
-1. Sustain lines / beatlines still GameObjects
-2. SP **mesh** variant switching deferred; SP **color** works
-3. Miss removes head immediately (no lingering miss mesh)
-4. Dense SparseUploader use — fine at current N
-5. No frustum cull of instances (global bounds; camera filter only)
-6. ConstantBuffer: no transform share (full SoA per category batch)
-7. Beatlines still GameObjects
-8. Sustain UV is unit-relative (not absolute length in UV.x like old SustainLine) — whammy shader may need tune
-9. Debug logs gated: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`
+1. SP **mesh** variant switching deferred; SP **color** works
+2. Miss removes head immediately (no lingering miss mesh)
+3. Dense SparseUploader use — fine at current N
+4. No frustum cull of instances (global bounds; camera filter only)
+5. ConstantBuffer: no transform share (full SoA per category batch)
+6. Sustain UV is unit-relative (not absolute length in UV.x like old SustainLine) — whammy shader may need tune
+7. Legacy `BeatlinePool` / `BeatlineElement` prefab remain for mesh+material extract only (no GO spawn)
+8. Debug logs gated: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`
+
+## Beatlines
+
+`BeatlineTracker` replaces pooled `BeatlineElement` GameObjects.
+
+- **Mesh/mat:** extracted once from `BeatlinePool.Prefab` (`MeshFilter` + `MeshRenderer.sharedMaterial`)
+- **Batch:** `GetOrCreateBatch` with dual-bound `_BaseColor` + `_Color` (Beatline SG uses `_Color`)
+- **Per type:** Measure/Strong/Weak → Y scale `0.07/0.05/0.03` + alpha `0.6/0.4/0.3`
+- **TRS:** `T(0, 0.002, z) * R_x(90°) * S(2, yScale, 1)` then `trackLocalToWorld`
+- **Color:** white RGB + type alpha; linearized on upload (`ToLinearGpuColor`)
+- **Lifetime:** remove at `z < -4`; spawn window same as notes (`SpawnTimeOffset`)
+- **Material:** `Beatline.mat` must have `m_EnableInstancingVariants: 1`
 
 ## Key Files
 
@@ -186,6 +198,9 @@ See `docs/RENDERING_PIPELINE.md`. Override material needs:
 |------|------|
 | `HighwayElementGraphicsSystem.cs` | BRG, buffer, batches, culling, upload API |
 | `NoteTracker.cs` | CPU note lifecycle + per-frame upload |
+| `SustainTracker.cs` | Unit-mesh sustain strips |
+| `BeatlineTracker.cs` | BRG beatlines (scale/alpha by type) |
+| `BeatlineData.cs` | Blittable beatline instance struct |
 | `ThemeMeshCache.cs` | Theme mesh/mat/emission extract |
 | `SparseUploader.cs` + `.compute` | Scatter GPU writes |
 | `PackedMatrix.cs` | float3x4 + affine inverse |
