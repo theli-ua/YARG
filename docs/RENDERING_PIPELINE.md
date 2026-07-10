@@ -131,13 +131,17 @@ Included in all highway shaders. Provides:
 
 Allocated at `BeforeSceneLoad`, never disposed. Global shader bindings:
 
-| Buffer | Size | Content |
-|--------|------|---------|
+| Buffer / global | Size | Content |
+|-----------------|------|---------|
 | `_YargCamMatrices` | 32 × 3 `float4x4` (6.2KB) | Interleaved: [view, invView, proj] per highway |
 | `_YargCurveFactors` | 32 `float` (128B) | Per-highway curve radius factor |
 | `_YargFadeParams` | 32 × 2 `float` (256B) | Per-highway [fadeStart, fadeEnd] distances |
+| `_YargNoteSpeeds` | 32 `float` (128B) | Per-highway note speed (BRG rest-Z scroll) |
+| `_YargVisualTime` | float | Song visual time for DOTS instance scroll |
 
 Matrices uploaded only when dirty (view matrix changed). Single `SetData()` call per dirty highway uploads all 3 matrices.
+
+**BRG scroll:** note/beatline/sustain instance matrices store rest-Z (`STRIKE + hitTime * speed`). `highways.hlsl` subtracts `visualTime * noteSpeed` for `DOTS_INSTANCING_ON` only so frets/track do not move.
 
 ### Per-Highway Camera Matrices
 

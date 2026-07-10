@@ -58,12 +58,14 @@ Shader "HighwaysAlphaMask"
 
             half4 frag(Varyings IN) : SV_Target
             {
-                int index = WorldPosToIndex(IN.positionWS);
+                // positionWS from object matrix is rest-Z for BRG; scroll for live fade distance.
+                float3 positionWS = YargApplyDotsScroll(IN.positionWS);
+                int index = WorldPosToIndex(positionWS);
                 float fadeStartPos = _YargFadeParams[index * 2];
                 float fadeEndPos   = _YargFadeParams[index * 2 + 1];
                 // Distance along highway Z from camera (matches prior fade convention)
-                float3 camPos = YargWorldSpaceCameraPos(IN.positionWS);
-                float dist = IN.positionWS.z - camPos.z;
+                float3 camPos = YargWorldSpaceCameraPos(positionWS);
+                float dist = positionWS.z - camPos.z;
                 float alpha = 0.0;
 
                 if (dist < fadeStartPos)

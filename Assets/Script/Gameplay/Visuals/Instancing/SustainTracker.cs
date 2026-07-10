@@ -219,15 +219,15 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var batch = _batches[i];
                 if (batch == null) continue;
 
-                float noteZ = TrackPlayer.STRIKE_LINE_POS +
-                    ((float)(d.noteHitTime - visualTime)) * noteSpeed;
+                // Rest-Z head; live head = restZ - visualTime*speed (highways.hlsl DOTS scroll).
+                float noteZRest = TrackPlayer.STRIKE_LINE_POS + (float)d.noteHitTime * noteSpeed;
+                float noteZLive = noteZRest - (float)visualTime * noteSpeed;
 
-                // When hitting: clip start to strike line (relative to note head).
+                // When hitting: clip start so scrolled world start sits on strike line.
                 float startZ = 0f;
                 if (d.state == SustainHitState.Hitting)
                 {
-                    // Same as SustainLine: start so world Z of start == STRIKE_LINE
-                    startZ = -noteZ + TrackPlayer.STRIKE_LINE_POS;
+                    startZ = -noteZLive + TrackPlayer.STRIKE_LINE_POS;
                     if (startZ < 0f) startZ = 0f;
                     if (startZ > d.fullLength) startZ = d.fullLength;
                 }
@@ -239,9 +239,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                 float width = WidthFor(d.kind);
 
                 // Unit mesh: X[-0.5,0.5] Z[0,1] → scale (width,1,visibleLen).
-                // Y above track surface (prefab used ~0.01; BRG needs more to clear highway mesh).
+                // Translate uses rest-Z so DOTS scroll matches heads/beatlines.
                 Matrix4x4 local = Matrix4x4.TRS(
-                    new Vector3(d.baseX, 0.08f, noteZ + startZ),
+                    new Vector3(d.baseX, 0.08f, noteZRest + startZ),
                     Quaternion.identity,
                     new Vector3(Mathf.Max(width, 0.15f), 1f, visibleLen));
                 Matrix4x4 world = trackLocalToWorld * local;

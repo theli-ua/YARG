@@ -5,6 +5,11 @@
 
 uniform int _YargHighwaysN;
 
+// BRG note/beatline/sustain scroll: matrices store rest-Z (STRIKE + hitTime*speed);
+// live Z = restZ - _YargVisualTime * noteSpeed[highway]. Applied only for DOTS instances
+// so frets/track MeshRenderers are unaffected. No Shader Graph property changes needed.
+uniform float _YargVisualTime;
+
 #ifdef UNITY_DOTS_INSTANCING_ENABLED
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UniversalDOTSInstancing.hlsl"
 #endif
@@ -12,6 +17,7 @@ uniform int _YargHighwaysN;
 // Single interleaved buffer: [index*3+0]=view, [index*3+1]=invView, [index*3+2]=proj
 StructuredBuffer<float4x4> _YargCamMatrices;
 StructuredBuffer<float> _YargCurveFactors;
+StructuredBuffer<float> _YargNoteSpeeds;
 
 // World position to highway index
 inline int WorldPosToIndex(float3 positionWS)
@@ -19,6 +25,19 @@ inline int WorldPosToIndex(float3 positionWS)
     float index = (positionWS.x + 10) / 100;
     index = clamp(index, 0, _YargHighwaysN - 1);
     return index;
+}
+
+// Scroll DOTS highway instances (notes/beatlines/sustains). MeshRenderers skip this.
+inline float3 YargApplyDotsScroll(float3 positionWS)
+{
+#if defined(UNITY_DOTS_INSTANCING_ENABLED) || defined(DOTS_INSTANCING_ON)
+    if (_YargHighwaysN > 0)
+    {
+        int index = WorldPosToIndex(positionWS);
+        positionWS.z -= _YargVisualTime * _YargNoteSpeeds[index];
+    }
+#endif
+    return positionWS;
 }
 
 // Accessors for interleaved matrix buffer
@@ -66,6 +85,7 @@ inline float4x4 YargViewMatrix(float3 positionWS)
 
 inline float3 YargTransformWorldToView(float3 positionWS)
 {
+    positionWS = YargApplyDotsScroll(positionWS);
     return mul(YargViewMatrix(positionWS), float4(positionWS, 1.0)).xyz;
 }
 
@@ -88,6 +108,9 @@ inline float3 YargWorldSpaceViewDir(float4 localPos)
 // Tranforms position from world to homogenous space
 inline float4 YargTransformWorldToHClip(float3 positionWS)
 {
+    // DOTS rest-Z → live Z before curve / highway cameras
+    positionWS = YargApplyDotsScroll(positionWS);
+
     if (_YargHighwaysN < 1)
         return DefTransformWorldToHClip(positionWS);
 

@@ -73,15 +73,20 @@ namespace YARG.Gameplay.Visuals
         private static ComputeBuffer s_cameraMatrixBuffer; // 32 × 3 Matrix4x4 (interleaved: view, invView, proj)
         private static ComputeBuffer s_curveFactorBuffer;  // 32 floats
         private static ComputeBuffer s_fadeParamsBuffer;   // 32 × 2 floats
+        private static ComputeBuffer s_noteSpeedBuffer;    // 32 floats — DOTS rest-Z scroll
 
         // Per-entry dirty flags
         private static readonly bool[] s_dirtyMatrices = new bool[MAX_MATRICES];
         private static readonly bool[] s_dirtyFade = new bool[MAX_MATRICES];
 
+        private readonly float[] _noteSpeeds = new float[MAX_MATRICES];
+
         public static readonly int YargHighwaysNumberID = Shader.PropertyToID("_YargHighwaysN");
         public static readonly int YargHighwayCamMatricesID = Shader.PropertyToID("_YargCamMatrices");
         public static readonly int YargCurveFactorsID = Shader.PropertyToID("_YargCurveFactors");
         public static readonly int YargFadeParamsID = Shader.PropertyToID("_YargFadeParams");
+        public static readonly int YargNoteSpeedsID = Shader.PropertyToID("_YargNoteSpeeds");
+        public static readonly int YargVisualTimeID = Shader.PropertyToID("_YargVisualTime");
 
         public static RTHandle HighwaysColorTextureHandle => _highwaysDepthlessColorTexture;
 
@@ -96,10 +101,13 @@ namespace YARG.Gameplay.Visuals
             s_cameraMatrixBuffer = new ComputeBuffer(MAX_MATRICES * MATS_PER_HIGHWAY, 64, ComputeBufferType.Default);
             s_curveFactorBuffer = new ComputeBuffer(MAX_MATRICES, 4, ComputeBufferType.Default);
             s_fadeParamsBuffer = new ComputeBuffer(MAX_MATRICES * 2, 4, ComputeBufferType.Default);
+            s_noteSpeedBuffer = new ComputeBuffer(MAX_MATRICES, 4, ComputeBufferType.Default);
 
             Shader.SetGlobalBuffer(YargHighwayCamMatricesID, s_cameraMatrixBuffer);
             Shader.SetGlobalBuffer(YargCurveFactorsID, s_curveFactorBuffer);
             Shader.SetGlobalBuffer(YargFadeParamsID, s_fadeParamsBuffer);
+            Shader.SetGlobalBuffer(YargNoteSpeedsID, s_noteSpeedBuffer);
+            Shader.SetGlobalFloat(YargVisualTimeID, 0f);
         }
 
         private void Awake()
@@ -512,11 +520,42 @@ namespace YARG.Gameplay.Visuals
             }
 
             UploadDirtyBuffers();
+            UploadDotsScrollGlobals();
 
             Shader.SetGlobalInteger(YargHighwaysNumberID, _cameras.Count);
             var renderer = _renderCamera.GetUniversalAdditionalCameraData().scriptableRenderer;
             renderer.EnqueuePass(_fadeCalcPass);
             renderer.EnqueuePass(_copyPass);
+        }
+
+        /// <summary>
+        /// BRG rest-Z scroll: <c>_YargVisualTime</c> and per-highway note speeds.
+        /// Matrices store STRIKE + hitTime*speed; HLSL subtracts visualTime*speed for DOTS only.
+        /// </summary>
+        private void UploadDotsScrollGlobals()
+        {
+            if (s_noteSpeedBuffer == null)
+                return;
+
+            float visualTime = _gameManager != null ? (float)_gameManager.VisualTime : 0f;
+            Shader.SetGlobalFloat(YargVisualTimeID, visualTime);
+
+            // Pull speeds from track players (highway index). Vocals camera slots stay 0.
+            if (_gameManager?.Players != null)
+            {
+                foreach (var player in _gameManager.Players)
+                {
+                    if (player is not TrackPlayer track)
+                        continue;
+                    int idx = track.HighwayIndex;
+                    if ((uint)idx >= MAX_MATRICES)
+                        continue;
+                    _noteSpeeds[idx] = track.NoteSpeed;
+                }
+            }
+
+            s_noteSpeedBuffer.SetData(_noteSpeeds);
+            Shader.SetGlobalBuffer(YargNoteSpeedsID, s_noteSpeedBuffer);
         }
 
         private void LateUpdate()

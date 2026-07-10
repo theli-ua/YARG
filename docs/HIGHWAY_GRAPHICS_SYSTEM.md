@@ -74,7 +74,11 @@ Offset bump+:  fixed SoA per batch (bump only)
 
 **Upload path:**
 1. `UploadInstance` / `UploadSustainInstance` write `NativeArray` staging on `ElementBatch`
-2. `EndUploadFrame` → for each dirty batch, contiguous `GraphicsBuffer.SetData` of `[0..activeCount)` per SoA region
+2. Matrices use **rest-Z** = `STRIKE + hitTime * noteSpeed` (no `- visualTime`)
+3. `highways.hlsl` `YargApplyDotsScroll` (DOTS only): `z -= _YargVisualTime * _YargNoteSpeeds[highway]`
+4. `EndUploadFrame` → contiguous `GraphicsBuffer.SetData` of `[0..activeCount)` per SoA region
+
+Scroll is in the shared HLSL include — no Shader Graph property changes. FadePass uses the same scroll for distance.
 
 **ElementBatch:** BRG IDs, fixed capacity, activeCount, GPU offsets, staging arrays, emission bake.
 
@@ -131,7 +135,7 @@ See `docs/RENDERING_PIPELINE.md`. Override material needs DOTS instance ID setup
 2. No frustum cull of instances (global bounds; camera filter only)
 3. ConstantBuffer platforms clamp shared-batch capacity
 4. Material categories still ×N draws/uploads per logical note
-5. Per-frame matrix rebuild still on CPU (VS positioning not yet)
+5. Per-frame dense rewrite still on CPU (rest-Z constant while topology stable — dirty-only upload not yet)
 6. Sustain UV is unit-relative vs old absolute-length UV
 7. Lanes / frets / track effects still GameObjects
 8. Debug logs: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`

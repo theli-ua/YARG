@@ -408,7 +408,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                 if (_graphicsSystem == null || _activeCount == 0 || _gameManager == null)
                     return;
 
-            double visualTime = _gameManager.VisualTime;
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
 
             for (int i = 0; i < _activeCount; i++)
@@ -416,12 +415,12 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var spawn = _spawnData[i];
                 var data = _notes[i];
 
-                // Compute Z position
-                float z = TrackPlayer.STRIKE_LINE_POS + ((float)(spawn.noteHitTime - visualTime)) * noteSpeed;
+                // Rest-Z: live Z = restZ - visualTime*noteSpeed applied in highways.hlsl for DOTS.
+                float restZ = TrackPlayer.STRIKE_LINE_POS + (float)spawn.noteHitTime * noteSpeed;
 
-                // Build note element local matrix: T(baseX, 0, z) * S(scale)
+                // Build note element local matrix: T(baseX, 0, restZ) * S(scale)
                 Matrix4x4 noteLocal = Matrix4x4.TRS(
-                    new Vector3(spawn.baseX, 0f, z),
+                    new Vector3(spawn.baseX, 0f, restZ),
                     Quaternion.identity,
                     spawn.scale
                 );

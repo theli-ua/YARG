@@ -148,18 +148,17 @@ namespace YARG.Gameplay.Visuals.Instancing
                 _activeCount == 0 || _gameManager == null)
                 return;
 
-            double visualTime = _gameManager.VisualTime;
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
 
             for (int i = 0; i < _activeCount; i++)
             {
                 var d = _data[i];
-                float z = TrackPlayer.STRIKE_LINE_POS +
-                    ((float)(d.time - visualTime)) * noteSpeed;
+                // Rest-Z; DOTS scroll in highways.hlsl → live Z
+                float restZ = TrackPlayer.STRIKE_LINE_POS + (float)d.time * noteSpeed;
 
                 // Match Beatline.prefab mesh child TRS with type-dependent Y scale.
                 Matrix4x4 local = Matrix4x4.TRS(
-                    new Vector3(0f, MeshLiftY, z),
+                    new Vector3(0f, MeshLiftY, restZ),
                     MeshRotation,
                     new Vector3(MeshWidthX, d.yScale, 1f));
                 Matrix4x4 world = trackLocalToWorld * local;
