@@ -14,16 +14,12 @@ Hitting clips `startZ` so start sits on strike line. State → color / `_IsActiv
 
 ```
 GameManager.Update
-    BeginHighwayInstanceUploads()          ← BeginUploadFrame (always; even 0 notes)
-    └── foreach TrackPlayer.GameplayUpdate()
-            ├── NoteTracker.RemoveExpired()
-            ├── SP edge → UpdateStarPowerColors
-            ├── drums SP-activator pulse
-            ├── NoteTracker.UploadToGPU     ← write CPU staging only
-            ├── SustainTracker.RemoveExpired / UploadToGPU
-            └── BeatlineTracker.RemoveExpired / UploadToGPU
-    FlushHighwayInstanceUploads()          ← EndUploadFrame → dense SetData
-    HighwayCameraRendering.LateUpdate      ← EndUploadFrame backup only
+    BeginHighwayInstanceUploads()              ← BeginUploadFrame
+    foreach GameplayUpdate()                   ← expire/spawn/SP (no GPU)
+    foreach CollectHighwayInstanceUploadDirtiness()
+    foreach UploadHighwayInstances()           ← staging; transforms optional
+    FlushHighwayInstanceUploads()              ← SetData (xforms if dirty)
+    HighwayCameraRendering.LateUpdate          ← EndUploadFrame backup
 
 No SparseUploader. No HeapAllocator. No buffer grow. No batch GC.
 Fixed caps in HighwayInstancingLimits. GPU buffer sized once at create.
@@ -135,7 +131,7 @@ See `docs/RENDERING_PIPELINE.md`. Override material needs DOTS instance ID setup
 2. No frustum cull of instances (global bounds; camera filter only)
 3. ConstantBuffer platforms clamp shared-batch capacity
 4. Material categories still ×N draws/uploads per logical note
-5. Per-frame dense rewrite still on CPU (rest-Z constant while topology stable — dirty-only upload not yet)
+5. Dirty-only transforms: skip O2W/W2O/random SetData when topology/track/speed stable; appearance always. Hitting sustains force transforms.
 6. Sustain UV is unit-relative vs old absolute-length UV
 7. Lanes / frets / track effects still GameObjects
 8. Debug logs: `HighwayElementGraphicsSystem.DebugLogging`, `ThemeMeshCache.DebugLogging`
