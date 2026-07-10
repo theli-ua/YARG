@@ -302,7 +302,7 @@ namespace YARG.Gameplay
             // cannot stick from the previous frame (ghost notes). Commit once after all uploads.
             _trackViewManager?.BeginHighwayInstanceUploads();
 
-            // Update players
+            // Update players (spawn/expire/SP — no BRG upload yet)
             int totalScore = 0;
             foreach (var player in _players)
             {
@@ -312,7 +312,21 @@ namespace YARG.Gameplay
                 totalScore += player.BandBonusScore;
             }
 
-            // Commit BRG note instance uploads once after every tracker wrote this frame.
+            // Collect transform dirtiness after spawn/expire so shared batches agree on
+            // full O2W rewrite vs appearance-only (rest-Z scroll is GPU-side).
+            foreach (var player in _players)
+            {
+                if (player is TrackPlayer trackPlayer)
+                    trackPlayer.CollectHighwayInstanceUploadDirtiness();
+            }
+
+            foreach (var player in _players)
+            {
+                if (player is TrackPlayer trackPlayer)
+                    trackPlayer.UploadHighwayInstances();
+            }
+
+            // Commit BRG instance uploads once after every tracker wrote this frame.
             // Must not depend on HighwayCameraRendering.LateUpdate (can miss → GPU instance data stale).
             _trackViewManager?.FlushHighwayInstanceUploads();
 

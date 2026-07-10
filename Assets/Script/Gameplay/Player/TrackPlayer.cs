@@ -64,6 +64,30 @@ namespace YARG.Gameplay.Player
         public SustainTracker SustainTracker; // unit-mesh sustain strips
         public BeatlineTracker BeatlineTracker; // BRG beatlines (replaces BeatlinePool GOs)
 
+        /// <summary>
+        /// Before UploadToGPU: mark HEGS transform flush if topology/track/speed changed.
+        /// Must run for all players before any UploadToGPU (shared batches).
+        /// </summary>
+        internal void CollectHighwayInstanceUploadDirtiness()
+        {
+            var trackL2W = transform.localToWorldMatrix;
+            NoteTracker?.CollectUploadDirtiness(trackL2W);
+            SustainTracker?.CollectUploadDirtiness(trackL2W);
+            BeatlineTracker?.CollectUploadDirtiness(trackL2W);
+        }
+
+        /// <summary>
+        /// Dense BRG staging upload. Call after all players' GameplayUpdate + Collect.
+        /// </summary>
+        internal void UploadHighwayInstances()
+        {
+            if (TrackCamera == null) return;
+            var trackL2W = transform.localToWorldMatrix;
+            NoteTracker?.UploadToGPU(trackL2W);
+            SustainTracker?.UploadToGPU(trackL2W);
+            BeatlineTracker?.UploadToGPU(trackL2W);
+        }
+
         /// <summary>Dedicated SP edge for note colors (must not share scoop flag write order).</summary>
         protected bool WasStarPowerActiveForNotes;
 
@@ -1377,28 +1401,17 @@ namespace YARG.Gameplay.Player
 
                 // Task 10.2: Per-instrument SP activator pulse update
                 UpdateStarPowerActivatorPulse();
-
-                // Upload to GPU — BeginUploadFrame owned by GameManager boundary.
-                if (TrackCamera != null)
-                {
-                    NoteTracker.UploadToGPU(transform.localToWorldMatrix);
-                }
             }
 
             if (SustainTracker != null)
             {
                 SustainTracker.RemoveExpired();
                 UpdateSustainWhammy();
-                if (TrackCamera != null)
-                    SustainTracker.UploadToGPU(transform.localToWorldMatrix);
             }
 
-            if (BeatlineTracker != null)
-            {
-                BeatlineTracker.RemoveExpired();
-                if (TrackCamera != null)
-                    BeatlineTracker.UploadToGPU(transform.localToWorldMatrix);
-            }
+            BeatlineTracker?.RemoveExpired();
+
+            // BRG UploadToGPU runs later: Collect dirtiness → UploadHighwayInstances (GameManager).
 
             if (LastHighScore != null && !_newHighScoreShown && Score > LastHighScore)
             {

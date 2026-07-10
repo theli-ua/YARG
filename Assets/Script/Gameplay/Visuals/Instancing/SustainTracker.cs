@@ -38,6 +38,12 @@ namespace YARG.Gameplay.Visuals.Instancing
         private float _widthOpen = 0.1f;
         private float _widthWildcard = 0.1f;
 
+        private bool _topologyDirty = true;
+        /// <summary>Hitting sustains change startZ every frame — need transform upload.</summary>
+        private bool _anyHitting;
+        private Matrix4x4 _lastTrackMatrix;
+        private float _lastNoteSpeed = float.NaN;
+
         internal int ActiveCount => _activeCount;
 
         internal SustainTracker(
@@ -105,6 +111,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _noteToIndex[noteObject] = index;
             _batches[index] = BatchFor(data.kind);
             _activeCount++;
+            _topologyDirty = true;
             return index;
         }
 
@@ -138,6 +145,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return;
 
             var d = _data[idx];
+            bool wasHitting = d.state == SustainHitState.Hitting;
             d.state = state;
             if (state == SustainHitState.Missed)
                 d.color = MissedColor;
@@ -146,6 +154,9 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (state != SustainHitState.Hitting)
                 d.whammy = 0f;
             _data[idx] = d;
+            // Entering/leaving hit changes clip geometry (startZ).
+            if (wasHitting != (state == SustainHitState.Hitting) || state == SustainHitState.Hitting)
+                _topologyDirty = true;
         }
 
         internal void SetWhammy(float whammy)
@@ -183,6 +194,32 @@ namespace YARG.Gameplay.Visuals.Instancing
             _batches[last] = null;
             _data[last] = default;
             _activeCount--;
+            _topologyDirty = true;
+        }
+
+        internal void CollectUploadDirtiness(Matrix4x4 trackLocalToWorld)
+        {
+            if (_disposed || _graphics == null) return;
+
+            float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
+            bool anyHitting = false;
+            for (int i = 0; i < _activeCount; i++)
+            {
+                if (_data[i].state == SustainHitState.Hitting)
+                {
+                    anyHitting = true;
+                    break;
+                }
+            }
+            _anyHitting = anyHitting;
+
+            // Hitting clips startZ every frame → transforms dirty while any hold active.
+            if (_topologyDirty || anyHitting ||
+                trackLocalToWorld != _lastTrackMatrix ||
+                noteSpeed != _lastNoteSpeed)
+            {
+                _graphics.RequestTransformUpload();
+            }
         }
 
         /// <summary>Drop sustains whose end has passed remove line.</summary>
@@ -212,6 +249,7 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             double visualTime = _gameManager.VisualTime;
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
+            bool writeTransforms = _graphics.UploadTransformsThisFrame;
 
             for (int i = 0; i < _activeCount; i++)
             {
@@ -219,35 +257,39 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var batch = _batches[i];
                 if (batch == null) continue;
 
-                // Rest-Z head; live head = restZ - visualTime*speed (highways.hlsl DOTS scroll).
-                float noteZRest = TrackPlayer.STRIKE_LINE_POS + (float)d.noteHitTime * noteSpeed;
-                float noteZLive = noteZRest - (float)visualTime * noteSpeed;
-
-                // When hitting: clip start so scrolled world start sits on strike line.
-                float startZ = 0f;
-                if (d.state == SustainHitState.Hitting)
+                Matrix4x4 world = Matrix4x4.identity;
+                if (writeTransforms)
                 {
-                    startZ = -noteZLive + TrackPlayer.STRIKE_LINE_POS;
-                    if (startZ < 0f) startZ = 0f;
-                    if (startZ > d.fullLength) startZ = d.fullLength;
+                    float noteZRest = TrackPlayer.STRIKE_LINE_POS + (float)d.noteHitTime * noteSpeed;
+                    float noteZLive = noteZRest - (float)visualTime * noteSpeed;
+
+                    float startZ = 0f;
+                    if (d.state == SustainHitState.Hitting)
+                    {
+                        startZ = -noteZLive + TrackPlayer.STRIKE_LINE_POS;
+                        if (startZ < 0f) startZ = 0f;
+                        if (startZ > d.fullLength) startZ = d.fullLength;
+                    }
+
+                    float visibleLen = d.fullLength - startZ;
+                    if (visibleLen < 0.001f)
+                        continue;
+
+                    float width = WidthFor(d.kind);
+                    Matrix4x4 local = Matrix4x4.TRS(
+                        new Vector3(d.baseX, 0.08f, noteZRest + startZ),
+                        Quaternion.identity,
+                        new Vector3(Mathf.Max(width, 0.15f), 1f, visibleLen));
+                    world = trackLocalToWorld * local;
+                }
+                else
+                {
+                    // Appearance-only: still skip fully clipped (shouldn't happen for waiting).
+                    if (d.fullLength < 0.001f)
+                        continue;
                 }
 
-                float visibleLen = d.fullLength - startZ;
-                if (visibleLen < 0.001f)
-                    continue;
-
-                float width = WidthFor(d.kind);
-
-                // Unit mesh: X[-0.5,0.5] Z[0,1] → scale (width,1,visibleLen).
-                // Translate uses rest-Z so DOTS scroll matches heads/beatlines.
-                Matrix4x4 local = Matrix4x4.TRS(
-                    new Vector3(d.baseX, 0.08f, noteZRest + startZ),
-                    Quaternion.identity,
-                    new Vector3(Mathf.Max(width, 0.15f), 1f, visibleLen));
-                Matrix4x4 world = trackLocalToWorld * local;
-
                 Vector4 color = d.color;
-                // Transparent sustain SG multiplies texture * color; force opaque alpha.
                 color.w = 1f;
                 Vector4 emission;
                 float isActive;
@@ -271,7 +313,22 @@ namespace YARG.Gameplay.Visuals.Instancing
 
                 int pos = batch.activeCount;
                 _graphics.UploadSustainInstance(
-                    batch, pos, world, color, emission, isActive, d.whammy);
+                    batch, pos, world, color, emission, isActive, d.whammy, writeTransforms);
+            }
+
+            if (writeTransforms && !_anyHitting)
+            {
+                // Only clear topology when not continuously dirty from hitting.
+                _topologyDirty = false;
+                _lastTrackMatrix = trackLocalToWorld;
+                _lastNoteSpeed = noteSpeed;
+            }
+            else if (writeTransforms)
+            {
+                _lastTrackMatrix = trackLocalToWorld;
+                _lastNoteSpeed = noteSpeed;
+                // keep _topologyDirty if we want — next collect still sees anyHitting
+                _topologyDirty = false;
             }
         }
 
@@ -281,6 +338,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             _noteToIndex.Clear();
             Array.Clear(_noteObjects, 0, _noteObjects.Length);
             Array.Clear(_batches, 0, _batches.Length);
+            _topologyDirty = true;
+            _anyHitting = false;
         }
 
         public void Dispose()

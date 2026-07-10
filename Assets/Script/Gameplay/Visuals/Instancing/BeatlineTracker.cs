@@ -26,6 +26,10 @@ namespace YARG.Gameplay.Visuals.Instancing
         private GameManager _gameManager;
         private bool _disposed;
 
+        private bool _topologyDirty = true;
+        private Matrix4x4 _lastTrackMatrix;
+        private float _lastNoteSpeed = float.NaN;
+
         internal int ActiveCount => _activeCount;
         internal int Capacity => _capacity;
 
@@ -110,6 +114,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             int index = _activeCount;
             _data[index] = BeatlineInstanceData.FromBeatline(beatline);
             _activeCount++;
+            _topologyDirty = true;
             return index;
         }
 
@@ -123,6 +128,19 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             _data[last] = default;
             _activeCount--;
+            _topologyDirty = true;
+        }
+
+        internal void CollectUploadDirtiness(Matrix4x4 trackLocalToWorld)
+        {
+            if (_disposed || _graphics == null) return;
+            float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
+            if (_topologyDirty ||
+                trackLocalToWorld != _lastTrackMatrix ||
+                noteSpeed != _lastNoteSpeed)
+            {
+                _graphics.RequestTransformUpload();
+            }
         }
 
         /// <summary>Drop beatlines past the remove line (z &lt; -4).</summary>
@@ -149,30 +167,40 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return;
 
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
+            bool writeTransforms = _graphics.UploadTransformsThisFrame;
 
             for (int i = 0; i < _activeCount; i++)
             {
                 var d = _data[i];
-                // Rest-Z; DOTS scroll in highways.hlsl → live Z
-                float restZ = TrackPlayer.STRIKE_LINE_POS + (float)d.time * noteSpeed;
-
-                // Match Beatline.prefab mesh child TRS with type-dependent Y scale.
-                Matrix4x4 local = Matrix4x4.TRS(
-                    new Vector3(0f, MeshLiftY, restZ),
-                    MeshRotation,
-                    new Vector3(MeshWidthX, d.yScale, 1f));
-                Matrix4x4 world = trackLocalToWorld * local;
+                Matrix4x4 world = Matrix4x4.identity;
+                if (writeTransforms)
+                {
+                    float restZ = TrackPlayer.STRIKE_LINE_POS + (float)d.time * noteSpeed;
+                    Matrix4x4 local = Matrix4x4.TRS(
+                        new Vector3(0f, MeshLiftY, restZ),
+                        MeshRotation,
+                        new Vector3(MeshWidthX, d.yScale, 1f));
+                    world = trackLocalToWorld * local;
+                }
 
                 int pos = _batch.activeCount;
                 _graphics.UploadInstance(
                     _batch, pos, world, d.color, emissionColor: Vector4.zero,
-                    randomFloat: 0f, randomVector: Vector2.zero);
+                    randomFloat: 0f, randomVector: Vector2.zero, writeTransforms);
+            }
+
+            if (writeTransforms)
+            {
+                _topologyDirty = false;
+                _lastTrackMatrix = trackLocalToWorld;
+                _lastNoteSpeed = noteSpeed;
             }
         }
 
         public void Reset()
         {
             _activeCount = 0;
+            _topologyDirty = true;
         }
 
         public void Dispose()

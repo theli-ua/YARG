@@ -63,6 +63,11 @@ namespace YARG.Gameplay.Visuals.Instancing
         // Capacity
         private int _capacity;
 
+        // Dirty-only transforms: rest-Z matrices stable until topology/track/speed change.
+        private bool _topologyDirty = true;
+        private Matrix4x4 _lastTrackMatrix;
+        private float _lastNoteSpeed = float.NaN;
+
         // Recycle assignment arrays to avoid per-spawn GC (exact-size rent/return).
         private const int MaxPooledAssignmentArrays = 64;
         private readonly List<NoteBatchAssignment[]> _assignmentPool = new(MaxPooledAssignmentArrays);
@@ -83,6 +88,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _noteObjects = new object[capacity];
             _batchAssignments = new NoteBatchAssignment[capacity][];
             _activeCount = 0;
+            _topologyDirty = true;
         }
 
         /// <summary>
@@ -159,6 +165,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
 
             _activeCount++;
+            _topologyDirty = true;
             return index;
         }
 
@@ -300,6 +307,23 @@ namespace YARG.Gameplay.Visuals.Instancing
             // activeCount to the actual written count, so removed notes naturally drop out.
 
             _activeCount--;
+            _topologyDirty = true;
+        }
+
+        /// <summary>
+        /// Before any UploadToGPU: request transform flush if topology/track/speed changed.
+        /// </summary>
+        internal void CollectUploadDirtiness(Matrix4x4 trackLocalToWorld)
+        {
+            if (_disposed || _graphicsSystem == null) return;
+
+            float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
+            if (_topologyDirty ||
+                trackLocalToWorld != _lastTrackMatrix ||
+                noteSpeed != _lastNoteSpeed)
+            {
+                _graphicsSystem.RequestTransformUpload();
+            }
         }
 
         /// <summary>
@@ -390,6 +414,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 }
 
                 _batchAssignments[i] = assignmentArray;
+                _topologyDirty = true; // SP mesh swap → new batches/slots
             }
         }
 
@@ -409,21 +434,23 @@ namespace YARG.Gameplay.Visuals.Instancing
                     return;
 
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
+            bool writeTransforms = _graphicsSystem.UploadTransformsThisFrame;
 
             for (int i = 0; i < _activeCount; i++)
             {
                 var spawn = _spawnData[i];
                 var data = _notes[i];
 
-                // Rest-Z: live Z = restZ - visualTime*noteSpeed applied in highways.hlsl for DOTS.
-                float restZ = TrackPlayer.STRIKE_LINE_POS + (float)spawn.noteHitTime * noteSpeed;
-
-                // Build note element local matrix: T(baseX, 0, restZ) * S(scale)
-                Matrix4x4 noteLocal = Matrix4x4.TRS(
-                    new Vector3(spawn.baseX, 0f, restZ),
-                    Quaternion.identity,
-                    spawn.scale
-                );
+                Matrix4x4 noteLocal = default;
+                if (writeTransforms)
+                {
+                    // Rest-Z: live Z = restZ - visualTime*noteSpeed in highways.hlsl for DOTS.
+                    float restZ = TrackPlayer.STRIKE_LINE_POS + (float)spawn.noteHitTime * noteSpeed;
+                    noteLocal = Matrix4x4.TRS(
+                        new Vector3(spawn.baseX, 0f, restZ),
+                        Quaternion.identity,
+                        spawn.scale);
+                }
 
                 // Upload to ALL batch assignments. Slot = batch.activeCount (shared append).
                 var assignments = _batchAssignments[i];
@@ -433,7 +460,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                     var assignment = assignments[j];
                     if (assignment.Batch == null) continue;
 
-                    Matrix4x4 worldMatrix = trackLocalToWorld * noteLocal * assignment.Batch.meshLocalOffset;
+                    Matrix4x4 worldMatrix = writeTransforms
+                        ? trackLocalToWorld * noteLocal * assignment.Batch.meshLocalOffset
+                        : Matrix4x4.identity;
 
                     Vector4 color = assignment.ColorField switch
                     {
@@ -444,10 +473,6 @@ namespace YARG.Gameplay.Visuals.Instancing
                         _ => data.color
                     };
 
-                    // Match NoteGroup.SetColorWithEmission / SetMetalColor:
-                    // colored: albedo = color + addition, emission = albedo * multiplier
-                    // metal:   albedo = emission = metalColor
-                    // static:  material default look (white instance color, no emission bake)
                     Vector4 baseColor;
                     Vector4 emission;
                     if (assignment.ColorField == NoteDataField.Static)
@@ -471,8 +496,15 @@ namespace YARG.Gameplay.Visuals.Instancing
                     int pos = assignment.Batch.activeCount;
                     _graphicsSystem.UploadInstance(
                         assignment.Batch, pos, worldMatrix, baseColor, emission,
-                        data.randomFloat, data.randomVector);
+                        data.randomFloat, data.randomVector, writeTransforms);
                 }
+            }
+
+            if (writeTransforms)
+            {
+                _topologyDirty = false;
+                _lastTrackMatrix = trackLocalToWorld;
+                _lastNoteSpeed = noteSpeed;
             }
 
             // Commit is owned by HighwayElementGraphicsSystem.EndUploadFrame (once/frame).
@@ -495,6 +527,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _noteToIndex.Clear();
             Array.Clear(_noteObjects, 0, _noteObjects.Length);
             Array.Clear(_batchAssignments, 0, _batchAssignments.Length);
+            _topologyDirty = true;
 
             // Batches are shared across trackers — don't reset batch.activeCount here.
         }

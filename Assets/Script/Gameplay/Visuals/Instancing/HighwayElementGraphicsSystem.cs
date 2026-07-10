@@ -40,6 +40,15 @@ namespace YARG.Gameplay.Visuals.Instancing
         private int _uploadFrame = -1;
         private bool _uploadsOpen;
 
+        /// <summary>
+        /// When true, flush O2W/W2O (+ random) this frame. Set via RequestTransformUpload
+        /// during Collect phase before any tracker UploadToGPU. Appearance always flushes.
+        /// </summary>
+        private bool _uploadTransformsThisFrame;
+
+        /// <summary>False until first full transform flush — forces transforms on first use.</summary>
+        private bool _gpuTransformsValid;
+
         private int _highwayCameraID;
 
         private static readonly bool UseConstantBuffer =
@@ -115,6 +124,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             public NativeArray<float> whammy;
 
             public bool dirty;
+            /// <summary>Staging O2W/W2O written this frame (for flush gating).</summary>
+            public bool transformsStaged;
 
             public void DisposeStaging()
             {
@@ -661,10 +672,13 @@ namespace YARG.Gameplay.Visuals.Instancing
 
                 _uploadFrame = frame;
                 _uploadsOpen = true;
+                // First frame / after grow: must upload transforms. Collect phase may set true.
+                _uploadTransformsThisFrame = !_gpuTransformsValid;
                 foreach (var batch in _batches.Values)
                 {
                     batch.activeCount = 0;
                     batch.dirty = false;
+                    batch.transformsStaged = false;
                 }
             }
             finally
@@ -672,6 +686,18 @@ namespace YARG.Gameplay.Visuals.Instancing
                 UnityEngine.Profiling.Profiler.EndSample();
             }
         }
+
+        /// <summary>
+        /// Call from tracker Collect phase (before any UploadToGPU) when topology, track
+        /// matrix, note speed, or sustain clip geometry changed.
+        /// </summary>
+        internal void RequestTransformUpload()
+        {
+            _uploadTransformsThisFrame = true;
+        }
+
+        /// <summary>True this frame after Collect: trackers must write O2W/W2O into staging.</summary>
+        internal bool UploadTransformsThisFrame => _uploadTransformsThisFrame;
 
         internal void EndUploadFrame()
         {
@@ -693,14 +719,21 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (!_uploadsOpen)
                 return;
 
+            bool anyTransforms = false;
             foreach (var batch in _batches.Values)
             {
                 if (!batch.dirty || batch.activeCount <= 0)
                     continue;
 
                 FlushBatch(batch);
+                if (batch.transformsStaged)
+                    anyTransforms = true;
                 batch.dirty = false;
+                batch.transformsStaged = false;
             }
+
+            if (anyTransforms || _uploadTransformsThisFrame)
+                _gpuTransformsValid = true;
 
             _uploadsOpen = false;
         }
@@ -708,8 +741,14 @@ namespace YARG.Gameplay.Visuals.Instancing
         private void FlushBatch(ElementBatch batch)
         {
             int n = batch.activeCount;
-            UploadRegion(batch.o2w, n, batch.objectToWorldOffset);
-            UploadRegion(batch.w2o, n, batch.worldToObjectOffset);
+
+            // Rest-Z transforms stable when topology/track/speed unchanged — skip GPU write.
+            if (_uploadTransformsThisFrame && batch.transformsStaged)
+            {
+                UploadRegion(batch.o2w, n, batch.objectToWorldOffset);
+                UploadRegion(batch.w2o, n, batch.worldToObjectOffset);
+            }
+
             UploadRegion(batch.baseColor, n, batch.baseColorOffset);
             UploadRegion(batch.emission, n, batch.emissionOffset);
 
@@ -718,8 +757,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                 UploadRegion(batch.isActive, n, batch.isActiveOffset);
                 UploadRegion(batch.whammy, n, batch.whammyOffset);
             }
-            else
+            else if (_uploadTransformsThisFrame && batch.transformsStaged)
             {
+                // Random only changes at spawn (topology) — ship with transforms.
                 UploadRegion(batch.randomFloat, n, batch.randomFloatOffset);
                 UploadRegion(batch.randomVector, n, batch.randomVectorOffset);
             }
@@ -788,7 +828,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             Vector4 baseColor,
             Vector4 emissionColor,
             float randomFloat,
-            Vector2 randomVector)
+            Vector2 randomVector,
+            bool writeTransforms = true)
         {
             if (_disposed || batch == null)
                 return;
@@ -800,12 +841,17 @@ namespace YARG.Gameplay.Visuals.Instancing
                 return;
             }
 
-            batch.o2w[instanceIndex] = PackedMatrix.FromMatrix4x4(objectToWorld);
-            batch.w2o[instanceIndex] = PackedMatrix.FromAffineInverse(objectToWorld);
+            if (writeTransforms)
+            {
+                batch.o2w[instanceIndex] = PackedMatrix.FromMatrix4x4(objectToWorld);
+                batch.w2o[instanceIndex] = PackedMatrix.FromAffineInverse(objectToWorld);
+                batch.randomFloat[instanceIndex] = randomFloat;
+                batch.randomVector[instanceIndex] = randomVector;
+                batch.transformsStaged = true;
+            }
+
             batch.baseColor[instanceIndex] = ToLinearGpuColor(baseColor);
             batch.emission[instanceIndex] = emissionColor;
-            batch.randomFloat[instanceIndex] = randomFloat;
-            batch.randomVector[instanceIndex] = randomVector;
             batch.dirty = true;
 
             if (instanceIndex >= batch.activeCount)
@@ -819,7 +865,8 @@ namespace YARG.Gameplay.Visuals.Instancing
             Vector4 baseColor,
             Vector4 emissionColor,
             float isActive,
-            float whammyAmount)
+            float whammyAmount,
+            bool writeTransforms = true)
         {
             if (_disposed || batch == null)
                 return;
@@ -834,8 +881,13 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (batch.kind != BatchKind.Sustain)
                 return;
 
-            batch.o2w[instanceIndex] = PackedMatrix.FromMatrix4x4(objectToWorld);
-            batch.w2o[instanceIndex] = PackedMatrix.FromAffineInverse(objectToWorld);
+            if (writeTransforms)
+            {
+                batch.o2w[instanceIndex] = PackedMatrix.FromMatrix4x4(objectToWorld);
+                batch.w2o[instanceIndex] = PackedMatrix.FromAffineInverse(objectToWorld);
+                batch.transformsStaged = true;
+            }
+
             batch.baseColor[instanceIndex] = ToLinearGpuColor(baseColor);
             batch.emission[instanceIndex] = emissionColor;
             batch.isActive[instanceIndex] = isActive;
