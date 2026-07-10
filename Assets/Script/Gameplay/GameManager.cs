@@ -312,13 +312,15 @@ namespace YARG.Gameplay
                 totalScore += player.BandBonusScore;
             }
 
-            // Collect transform dirtiness after spawn/expire so shared batches agree on
-            // full O2W rewrite vs appearance-only (rest-Z scroll is GPU-side).
+            // Collect transform/appearance dirtiness after spawn/expire so shared batches agree.
             foreach (var player in _players)
             {
                 if (player is TrackPlayer trackPlayer)
                     trackPlayer.CollectHighwayInstanceUploadDirtiness();
             }
+
+            // Skip staging entirely when nothing dirty (keep last activeCount + GPU data).
+            _trackViewManager?.FinalizeHighwayInstanceUploadPlan();
 
             foreach (var player in _players)
             {

@@ -376,6 +376,11 @@ namespace YARG.Gameplay.Visuals
         /// Reset batch activeCounts before any NoteTracker.UploadToGPU this frame.
         /// Prefer calling from GameManager before the player loop (always, even if 0 notes).
         /// </summary>
+        public void FinalizeInstancedUploadPlan()
+        {
+            _graphicsSystem?.FinalizeUploadPlan();
+        }
+
         public void BeginInstancedUploads()
         {
             _graphicsSystem?.BeginUploadFrame();

@@ -63,8 +63,9 @@ namespace YARG.Gameplay.Visuals.Instancing
         // Capacity
         private int _capacity;
 
-        // Dirty-only transforms: rest-Z matrices stable until topology/track/speed change.
+        // Dirty-only: rest-Z transforms stable until topology/track/speed change.
         private bool _topologyDirty = true;
+        private bool _appearanceDirty = true;
         private Matrix4x4 _lastTrackMatrix;
         private float _lastNoteSpeed = float.NaN;
 
@@ -89,6 +90,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _batchAssignments = new NoteBatchAssignment[capacity][];
             _activeCount = 0;
             _topologyDirty = true;
+            _appearanceDirty = true;
         }
 
         /// <summary>
@@ -166,6 +168,7 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             _activeCount++;
             _topologyDirty = true;
+            _appearanceDirty = true;
             return index;
         }
 
@@ -308,10 +311,11 @@ namespace YARG.Gameplay.Visuals.Instancing
 
             _activeCount--;
             _topologyDirty = true;
+            _appearanceDirty = true;
         }
 
         /// <summary>
-        /// Before any UploadToGPU: request transform flush if topology/track/speed changed.
+        /// Before UploadToGPU: request transform and/or appearance flush.
         /// </summary>
         internal void CollectUploadDirtiness(Matrix4x4 trackLocalToWorld)
         {
@@ -324,6 +328,9 @@ namespace YARG.Gameplay.Visuals.Instancing
             {
                 _graphicsSystem.RequestTransformUpload();
             }
+
+            if (_appearanceDirty)
+                _graphicsSystem.RequestAppearanceUpload();
         }
 
         /// <summary>
@@ -428,9 +435,11 @@ namespace YARG.Gameplay.Visuals.Instancing
             try
             {
                 if (_disposed) return;
-                // BeginUploadFrame is owned by GameManager/TrackViewManager (always once/frame).
-                // Do not early-out on _activeCount==0 before that boundary — and do not Begin here.
-                if (_graphicsSystem == null || _activeCount == 0 || _gameManager == null)
+                if (_graphicsSystem == null || _gameManager == null)
+                    return;
+                if (_graphicsSystem.SkipStagingThisFrame)
+                    return;
+                if (_activeCount == 0)
                     return;
 
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
@@ -507,6 +516,9 @@ namespace YARG.Gameplay.Visuals.Instancing
                 _lastNoteSpeed = noteSpeed;
             }
 
+            if (_graphicsSystem.UploadAppearanceThisFrame)
+                _appearanceDirty = false;
+
             // Commit is owned by HighwayElementGraphicsSystem.EndUploadFrame (once/frame).
             }
             finally
@@ -528,6 +540,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             Array.Clear(_noteObjects, 0, _noteObjects.Length);
             Array.Clear(_batchAssignments, 0, _batchAssignments.Length);
             _topologyDirty = true;
+            _appearanceDirty = true;
 
             // Batches are shared across trackers — don't reset batch.activeCount here.
         }
@@ -575,6 +588,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             var noteData = _notes[index];
             noteData.color = color;
             _notes[index] = noteData;
+            _appearanceDirty = true;
         }
 
         /// <summary>Set the color of a note by flat index (for SP activator pulse).</summary>
@@ -584,6 +598,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             var noteData = _notes[index];
             noteData.color = color;
             _notes[index] = noteData;
+            _appearanceDirty = true;
         }
 
         // ---- Task 10.1: SP activation color updates ----
@@ -604,6 +619,8 @@ namespace YARG.Gameplay.Visuals.Instancing
                     _spawnData[i].colorIndex, isStarPowerActive, ref noteData);
                 _notes[i] = noteData;
             }
+
+            _appearanceDirty = true;
         }
 
         // ---- Task 10.2: Drums SP-activator pulse ----
@@ -627,6 +644,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var noteData = _notes[i];
                 noteData.color = Vector4.Lerp(baseColor, pulseColor, beatPercentage);
                 _notes[i] = noteData;
+                _appearanceDirty = true;
             }
         }
     }

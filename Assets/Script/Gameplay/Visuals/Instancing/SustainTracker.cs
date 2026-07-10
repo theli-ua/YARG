@@ -39,6 +39,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         private float _widthWildcard = 0.1f;
 
         private bool _topologyDirty = true;
+        private bool _appearanceDirty = true;
         /// <summary>Hitting sustains change startZ every frame — need transform upload.</summary>
         private bool _anyHitting;
         private Matrix4x4 _lastTrackMatrix;
@@ -112,6 +113,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _batches[index] = BatchFor(data.kind);
             _activeCount++;
             _topologyDirty = true;
+            _appearanceDirty = true;
             return index;
         }
 
@@ -157,6 +159,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             // Entering/leaving hit changes clip geometry (startZ).
             if (wasHitting != (state == SustainHitState.Hitting) || state == SustainHitState.Hitting)
                 _topologyDirty = true;
+            _appearanceDirty = true;
         }
 
         internal void SetWhammy(float whammy)
@@ -169,6 +172,7 @@ namespace YARG.Gameplay.Visuals.Instancing
                 var d = _data[i];
                 d.whammy = whammy;
                 _data[i] = d;
+                _appearanceDirty = true;
             }
         }
 
@@ -195,6 +199,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _data[last] = default;
             _activeCount--;
             _topologyDirty = true;
+            _appearanceDirty = true;
         }
 
         internal void CollectUploadDirtiness(Matrix4x4 trackLocalToWorld)
@@ -220,6 +225,9 @@ namespace YARG.Gameplay.Visuals.Instancing
             {
                 _graphics.RequestTransformUpload();
             }
+
+            if (_appearanceDirty || anyHitting)
+                _graphics.RequestAppearanceUpload();
         }
 
         /// <summary>Drop sustains whose end has passed remove line.</summary>
@@ -244,7 +252,11 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {
-            if (_disposed || _graphics == null || _activeCount == 0 || _gameManager == null)
+            if (_disposed || _graphics == null || _gameManager == null)
+                return;
+            if (_graphics.SkipStagingThisFrame)
+                return;
+            if (_activeCount == 0)
                 return;
 
             double visualTime = _gameManager.VisualTime;
@@ -327,9 +339,11 @@ namespace YARG.Gameplay.Visuals.Instancing
             {
                 _lastTrackMatrix = trackLocalToWorld;
                 _lastNoteSpeed = noteSpeed;
-                // keep _topologyDirty if we want — next collect still sees anyHitting
                 _topologyDirty = false;
             }
+
+            if (_graphics.UploadAppearanceThisFrame)
+                _appearanceDirty = false;
         }
 
         public void Reset()
@@ -339,6 +353,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             Array.Clear(_noteObjects, 0, _noteObjects.Length);
             Array.Clear(_batches, 0, _batches.Length);
             _topologyDirty = true;
+            _appearanceDirty = true;
             _anyHitting = false;
         }
 

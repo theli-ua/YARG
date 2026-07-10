@@ -64,6 +64,14 @@ namespace YARG.Gameplay.HUD
         }
 
         /// <summary>
+        /// After Collect dirtiness: decide skip vs re-append staging.
+        /// </summary>
+        public void FinalizeHighwayInstanceUploadPlan()
+        {
+            _highwayCameraRendering?.FinalizeInstancedUploadPlan();
+        }
+
+        /// <summary>
         /// Flush BRG instance uploads after all TrackPlayer.GameplayUpdate calls.
         /// Called from GameManager so commit does not depend on HighwayCameraRendering.LateUpdate order.
         /// </summary>

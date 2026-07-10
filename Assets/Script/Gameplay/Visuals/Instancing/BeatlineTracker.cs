@@ -27,6 +27,7 @@ namespace YARG.Gameplay.Visuals.Instancing
         private bool _disposed;
 
         private bool _topologyDirty = true;
+        private bool _appearanceDirty = true;
         private Matrix4x4 _lastTrackMatrix;
         private float _lastNoteSpeed = float.NaN;
 
@@ -115,6 +116,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _data[index] = BeatlineInstanceData.FromBeatline(beatline);
             _activeCount++;
             _topologyDirty = true;
+            _appearanceDirty = true;
             return index;
         }
 
@@ -129,6 +131,7 @@ namespace YARG.Gameplay.Visuals.Instancing
             _data[last] = default;
             _activeCount--;
             _topologyDirty = true;
+            _appearanceDirty = true;
         }
 
         internal void CollectUploadDirtiness(Matrix4x4 trackLocalToWorld)
@@ -141,6 +144,9 @@ namespace YARG.Gameplay.Visuals.Instancing
             {
                 _graphics.RequestTransformUpload();
             }
+
+            if (_appearanceDirty)
+                _graphics.RequestAppearanceUpload();
         }
 
         /// <summary>Drop beatlines past the remove line (z &lt; -4).</summary>
@@ -162,8 +168,11 @@ namespace YARG.Gameplay.Visuals.Instancing
 
         public void UploadToGPU(Matrix4x4 trackLocalToWorld)
         {
-            if (_disposed || _graphics == null || _batch == null ||
-                _activeCount == 0 || _gameManager == null)
+            if (_disposed || _graphics == null || _batch == null || _gameManager == null)
+                return;
+            if (_graphics.SkipStagingThisFrame)
+                return;
+            if (_activeCount == 0)
                 return;
 
             float noteSpeed = _trackPlayer?.NoteSpeed ?? 1f;
@@ -195,12 +204,16 @@ namespace YARG.Gameplay.Visuals.Instancing
                 _lastTrackMatrix = trackLocalToWorld;
                 _lastNoteSpeed = noteSpeed;
             }
+
+            if (_graphics.UploadAppearanceThisFrame)
+                _appearanceDirty = false;
         }
 
         public void Reset()
         {
             _activeCount = 0;
             _topologyDirty = true;
+            _appearanceDirty = true;
         }
 
         public void Dispose()

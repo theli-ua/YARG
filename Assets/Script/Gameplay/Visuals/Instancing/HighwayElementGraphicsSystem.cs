@@ -40,14 +40,17 @@ namespace YARG.Gameplay.Visuals.Instancing
         private int _uploadFrame = -1;
         private bool _uploadsOpen;
 
-        /// <summary>
-        /// When true, flush O2W/W2O (+ random) this frame. Set via RequestTransformUpload
-        /// during Collect phase before any tracker UploadToGPU. Appearance always flushes.
-        /// </summary>
+        /// <summary>Flush O2W/W2O (+ random) this frame. Collect via RequestTransformUpload.</summary>
         private bool _uploadTransformsThisFrame;
 
-        /// <summary>False until first full transform flush — forces transforms on first use.</summary>
+        /// <summary>Flush color/emission/isActive/whammy this frame. Collect via RequestAppearanceUpload.</summary>
+        private bool _uploadAppearanceThisFrame;
+
+        /// <summary>True when neither transforms nor appearance dirty — keep last activeCount, skip SetData.</summary>
+        private bool _skipStagingThisFrame;
+
         private bool _gpuTransformsValid;
+        private bool _gpuAppearanceValid;
 
         private int _highwayCameraID;
 
@@ -672,14 +675,11 @@ namespace YARG.Gameplay.Visuals.Instancing
 
                 _uploadFrame = frame;
                 _uploadsOpen = true;
-                // First frame / after grow: must upload transforms. Collect phase may set true.
+                _skipStagingThisFrame = false;
+                // First use forces full upload; Collect may set more.
                 _uploadTransformsThisFrame = !_gpuTransformsValid;
-                foreach (var batch in _batches.Values)
-                {
-                    batch.activeCount = 0;
-                    batch.dirty = false;
-                    batch.transformsStaged = false;
-                }
+                _uploadAppearanceThisFrame = !_gpuAppearanceValid;
+                // Do NOT zero activeCount here — FinalizeUploadPlan does if staging needed.
             }
             finally
             {
@@ -687,17 +687,45 @@ namespace YARG.Gameplay.Visuals.Instancing
             }
         }
 
-        /// <summary>
-        /// Call from tracker Collect phase (before any UploadToGPU) when topology, track
-        /// matrix, note speed, or sustain clip geometry changed.
-        /// </summary>
+        /// <summary>Topology / track / speed / sustain clip changed.</summary>
         internal void RequestTransformUpload()
         {
             _uploadTransformsThisFrame = true;
+            // New/reordered slots need colors in the same flush.
+            _uploadAppearanceThisFrame = true;
         }
 
-        /// <summary>True this frame after Collect: trackers must write O2W/W2O into staging.</summary>
+        /// <summary>Color / emission / pulse / SP / whammy / sustain state changed.</summary>
+        internal void RequestAppearanceUpload()
+        {
+            _uploadAppearanceThisFrame = true;
+        }
+
+        /// <summary>
+        /// After Collect: if nothing dirty, skip staging (keep activeCount). Else reset activeCount for re-append.
+        /// </summary>
+        internal void FinalizeUploadPlan()
+        {
+            if (_disposed || !_uploadsOpen) return;
+
+            if (!_uploadTransformsThisFrame && !_uploadAppearanceThisFrame)
+            {
+                _skipStagingThisFrame = true;
+                return;
+            }
+
+            _skipStagingThisFrame = false;
+            foreach (var batch in _batches.Values)
+            {
+                batch.activeCount = 0;
+                batch.dirty = false;
+                batch.transformsStaged = false;
+            }
+        }
+
+        internal bool SkipStagingThisFrame => _skipStagingThisFrame;
         internal bool UploadTransformsThisFrame => _uploadTransformsThisFrame;
+        internal bool UploadAppearanceThisFrame => _uploadAppearanceThisFrame;
 
         internal void EndUploadFrame()
         {
@@ -719,21 +747,23 @@ namespace YARG.Gameplay.Visuals.Instancing
             if (!_uploadsOpen)
                 return;
 
-            bool anyTransforms = false;
-            foreach (var batch in _batches.Values)
+            if (!_skipStagingThisFrame)
             {
-                if (!batch.dirty || batch.activeCount <= 0)
-                    continue;
+                foreach (var batch in _batches.Values)
+                {
+                    if (!batch.dirty || batch.activeCount <= 0)
+                        continue;
 
-                FlushBatch(batch);
-                if (batch.transformsStaged)
-                    anyTransforms = true;
-                batch.dirty = false;
-                batch.transformsStaged = false;
+                    FlushBatch(batch);
+                    batch.dirty = false;
+                    batch.transformsStaged = false;
+                }
+
+                if (_uploadTransformsThisFrame)
+                    _gpuTransformsValid = true;
+                if (_uploadAppearanceThisFrame)
+                    _gpuAppearanceValid = true;
             }
-
-            if (anyTransforms || _uploadTransformsThisFrame)
-                _gpuTransformsValid = true;
 
             _uploadsOpen = false;
         }
@@ -742,24 +772,26 @@ namespace YARG.Gameplay.Visuals.Instancing
         {
             int n = batch.activeCount;
 
-            // Rest-Z transforms stable when topology/track/speed unchanged — skip GPU write.
             if (_uploadTransformsThisFrame && batch.transformsStaged)
             {
                 UploadRegion(batch.o2w, n, batch.objectToWorldOffset);
                 UploadRegion(batch.w2o, n, batch.worldToObjectOffset);
             }
 
-            UploadRegion(batch.baseColor, n, batch.baseColorOffset);
-            UploadRegion(batch.emission, n, batch.emissionOffset);
+            if (_uploadAppearanceThisFrame)
+            {
+                UploadRegion(batch.baseColor, n, batch.baseColorOffset);
+                UploadRegion(batch.emission, n, batch.emissionOffset);
 
-            if (batch.kind == BatchKind.Sustain)
-            {
-                UploadRegion(batch.isActive, n, batch.isActiveOffset);
-                UploadRegion(batch.whammy, n, batch.whammyOffset);
+                if (batch.kind == BatchKind.Sustain)
+                {
+                    UploadRegion(batch.isActive, n, batch.isActiveOffset);
+                    UploadRegion(batch.whammy, n, batch.whammyOffset);
+                }
             }
-            else if (_uploadTransformsThisFrame && batch.transformsStaged)
+
+            if (_uploadTransformsThisFrame && batch.transformsStaged && batch.kind != BatchKind.Sustain)
             {
-                // Random only changes at spawn (topology) — ship with transforms.
                 UploadRegion(batch.randomFloat, n, batch.randomFloatOffset);
                 UploadRegion(batch.randomVector, n, batch.randomVectorOffset);
             }
