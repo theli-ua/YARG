@@ -169,13 +169,22 @@ Vocal track is rendered alongside highways in the same pass:
 
 ### Highway Render Texture
 
-- `_highwaysColorTexture` — screen-resolution HDR RT with 16-bit depth
-- Highway camera's `targetTexture`
+- `_highwaysColorTexture` — screen-resolution HDR RT with 16-bit depth; `msaaSamples` matches URP asset (`msaaSampleCount`)
+- Highway camera's `targetTexture` (URP takes camera MSAA from `targetTexture.antiAliasing` when set)
 - RGB = color, A channel = fade alpha (written by FadePass)
 
 ### HighwayCopyPass
 
-Copies `_highwaysColorTexture` (color + depth) to `_highwaysDepthlessColorTexture` (color-only HDR RT). Required because RenderGraph `ImportTexture` cannot use combined color+depth textures as sources.
+Copies highway camera `activeColorTexture` into `_highwaysDepthlessColorTexture` (color-only HDR RT, **same MSAA as the camera target**). Required because combined color+depth RTs are awkward as RenderGraph sample sources for composite.
+
+Path (same idea as `VenueFrameCopyPass`):
+
+1. **`AddCopyPass`** when `CanAddCopyPass` (matching MSAA/size, native RP) — preferred
+2. **`CommandBuffer.Blit` fallback** via `AddUnsafePass` when MSAA/size differ — works with nameID-only imported camera targets (null `.rt`) and can resolve MSAA
+
+Do **not** use `Blitter.BlitTexture(RTHandle)` on `activeColorTexture` after FinalBlit: that handle is often a nameID wrapper with null `.rt`, and `MaterialPropertyBlock.SetTexture` throws `ArgumentNullException`. Do **not** use `AddBlitPass`: it requires `GetTextureDesc` / `validDesc`.
+
+Composite samples the depthless RT (auto-resolves if MSAA > 1).
 
 Event: `AfterRendering`.
 
@@ -295,7 +304,7 @@ When TAA is selected and DRS is disabled (`renderScale == 1.0`), MSAA is automat
 
 ### Highway Camera AA
 
-Highway camera has `allowMSAA = true` by default (inherited from URP Asset msaaSampleCount). Highway AA is separate from venue AA — highways render to their own RT.
+Highway camera has `allowMSAA = true` by default. Both `_highwaysColorTexture` and `_highwaysDepthlessColorTexture` use `msaaSamples = URP.msaaSampleCount` so URP enables real highway MSAA (from `targetTexture.antiAliasing`) and `AddCopyPass` can match samples. Highway AA is separate from venue AA — highways render to their own RT.
 
 ### No-Venue Camera AA
 

@@ -152,17 +152,29 @@ namespace YARG.Gameplay.Visuals
         {
             Cleanup();
 
-            // Combined Color + Depth texture for rendering
+            var urp = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
+            int msaaSamples = urp != null ? urp.msaaSampleCount : 1;
+
+            // Combined Color + Depth texture for rendering.
+            // MSAA must match URP: when a camera has targetTexture, URP takes MSAA from
+            // targetTexture.antiAliasing (not the asset alone).
             var colorDescriptor = new RenderTextureDescriptor(
                 Screen.width, Screen.height,
                 RenderTextureFormat.DefaultHDR, 16);
+            colorDescriptor.msaaSamples = msaaSamples;
             _highwaysColorTexture = new RenderTexture(colorDescriptor);
             _renderCamera.targetTexture = _highwaysColorTexture;
 
-            // I could not figure out how to use combined RenderTexture as source for blit in the RenderGraph pass, so we need a copy without depth
-            colorDescriptor.depthBufferBits = 0;
-            _highwaysDepthlessColorTexture = RTHandles.Alloc(width: Screen.width, height: Screen.height, name: "HighwaysDepthlessColorTexture");
-
+            // Color-only RT for composite sampling. Same MSAA as the camera target so
+            // AddCopyPass can 1:1 copy (VenueFrameCopyPass pattern). Sampling in composite
+            // auto-resolves when MSAA > 1.
+            var depthlessDescriptor = new RenderTextureDescriptor(
+                Screen.width, Screen.height,
+                RenderTextureFormat.DefaultHDR, 0);
+            depthlessDescriptor.msaaSamples = msaaSamples;
+            _highwaysDepthlessColorTexture = RTHandles.Alloc(
+                depthlessDescriptor, FilterMode.Bilinear, TextureWrapMode.Clamp,
+                name: "HighwaysDepthlessColorTexture");
         }
 
         public Vector2 WorldToViewport(Vector3 positionWs, int index)
@@ -759,6 +771,8 @@ namespace YARG.Gameplay.Visuals
 
         public sealed class HighwayCopyPass : ScriptableRenderPass
         {
+            private readonly ProfilingSampler _profilingSampler = new("Highway Color Copy");
+
             public HighwayCopyPass()
             {
                 renderPassEvent = RenderPassEvent.AfterRendering;
@@ -768,10 +782,45 @@ namespace YARG.Gameplay.Visuals
             {
                 var resourceData = frameData.Get<UniversalResourceData>();
 
-                TextureHandle target = renderGraph.ImportTexture(HighwayCameraRendering.HighwaysColorTextureHandle);
                 TextureHandle source = resourceData.activeColorTexture;
+                TextureHandle destination = renderGraph.ImportTexture(HighwayCameraRendering.HighwaysColorTextureHandle);
 
-                renderGraph.AddCopyPass(source, target, passName: "Highway Color Copy");
+                if (!source.IsValid() || !destination.IsValid())
+                    return;
+
+                // Prefer AddCopyPass (same as VenueFrameCopyPass) when MSAA/size match.
+                // activeColorTexture is often a nameID-only RTHandle (null .rt) after FinalBlit,
+                // so Blitter.BlitTexture(RTHandle) throws ArgumentNullException on SetTexture.
+                if (renderGraph.CanAddCopyPass(source, destination))
+                {
+                    renderGraph.AddCopyPass(source, destination, passName: "Highway Color Copy");
+                    return;
+                }
+
+                // Fallback: CommandBuffer.Blit works with RenderTargetIdentifier (nameID wrappers)
+                // and resolves MSAA when source samples > destination samples.
+                using (var builder = renderGraph.AddUnsafePass<PassData>(
+                    "Highway Color Copy", out var passData, _profilingSampler))
+                {
+                    builder.AllowPassCulling(false);
+                    passData.source = source;
+                    passData.destination = destination;
+
+                    builder.UseTexture(source, AccessFlags.Read);
+                    builder.UseTexture(destination, AccessFlags.Write);
+
+                    builder.SetRenderFunc(static (PassData data, UnsafeGraphContext context) =>
+                    {
+                        var cmd = CommandBufferHelpers.GetNativeCommandBuffer(context.cmd);
+                        cmd.Blit(data.source, data.destination);
+                    });
+                }
+            }
+
+            private class PassData
+            {
+                public TextureHandle source;
+                public TextureHandle destination;
             }
         }
 
