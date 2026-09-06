@@ -213,6 +213,10 @@ namespace YARG.Gameplay.Visuals
             {
                 primaryColor = isSp ? colors.GetNoteStarPowerColor(NoteRef.Fret) : colors.GetNoteColor(NoteRef.Fret);
                 primaryNoSp = colors.GetNoteColor(NoteRef.Fret);
+                // No real secondary color for open/wildcard; mirror primary so the
+                // sustain-line blend in SustainLine.SetState is a no-op (same as Up/Down).
+                secondaryColor = primaryColor;
+                secondaryNoSp = primaryNoSp;
             }
             else
             {
@@ -275,8 +279,13 @@ namespace YARG.Gameplay.Visuals
 
             if (!NoteRef.IsSustain) return;
 
-            _sustainLine.SetState(SustainState, primaryColor.ToUnityColor());
+            // Set the secondary color before SetState, because SetState blends the
+            // stored secondary color into the sustain line color. Setting it after
+            // (as it was before) left the blend one update behind — null on the
+            // first call, so barre sustains rendered pure primary while Waiting and
+            // only showed the correct blend once activated (Hitting).
             _sustainLine.SetSecondaryColor(secondaryColor.ToUnityColor());
+            _sustainLine.SetState(SustainState, primaryColor.ToUnityColor());
         }
 
         protected override void HideElement()
