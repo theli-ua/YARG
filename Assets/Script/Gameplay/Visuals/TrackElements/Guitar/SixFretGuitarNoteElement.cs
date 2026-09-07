@@ -127,6 +127,15 @@ namespace YARG.Gameplay.Visuals
             NoteGroup.SetActive(true);
             NoteGroup.Initialize();
 
+            // Open HOPO/Tap notes have EmissionAddition: 1 in the prefab, which
+            // washes the note color to white. Reset it so the dedicated
+            // OpenHopoNote color field is visible.
+            if (NoteRef.Fret == (int) SixFretGuitarFret.Open &&
+                NoteRef.Type is GuitarNoteType.Hopo or GuitarNoteType.Tap)
+            {
+                NoteGroup.ResetEmissionAddition();
+            }
+
             if (NoteRef.IsSustain)
             {
                 _sustainLine.gameObject.SetActive(true);
@@ -209,7 +218,21 @@ namespace YARG.Gameplay.Visuals
             System.Drawing.Color primaryColor, primaryNoSp;
             System.Drawing.Color secondaryColor = default, secondaryNoSp = default;
 
-            if (NoteRef.Fret == (int) SixFretGuitarFret.Open || NoteRef.Fret == (int) SixFretGuitarFret.Wildcard)
+            if (NoteRef.Fret == (int) SixFretGuitarFret.Open &&
+                NoteRef.Type is GuitarNoteType.Hopo or GuitarNoteType.Tap)
+            {
+                // Open HOPO/Tap notes use a dedicated color (the prefab's
+                // EmissionAddition: 1 washes to white by default; ResetEmissionAddition
+                // in InitializeElement nullifies it so this color is visible).
+                primaryColor = isSp ? colors.OpenHopoNoteStarPower : colors.OpenHopoNote;
+                primaryNoSp = colors.OpenHopoNote;
+                // No real secondary for open notes; mirror primary so the
+                // sustain-line blend in SustainLine.SetState is a no-op.
+                secondaryColor = primaryColor;
+                secondaryNoSp = primaryNoSp;
+            }
+            else if (NoteRef.Fret == (int) SixFretGuitarFret.Open ||
+                     NoteRef.Fret == (int) SixFretGuitarFret.Wildcard)
             {
                 primaryColor = isSp ? colors.GetNoteStarPowerColor(NoteRef.Fret) : colors.GetNoteColor(NoteRef.Fret);
                 primaryNoSp = colors.GetNoteColor(NoteRef.Fret);
